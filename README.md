@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="docs/vgi-logo.png" alt="Vector Gateway Interface (VGI)" width="320">
+</p>
+
+<p align="center"><em>A <a href="https://query.farm">Query.Farm</a> VGI worker for DuckDB.</em></p>
+
 # vgi-elasticsearch
 
 A [VGI](https://query.farm) worker (Go) that queries an **Elasticsearch /
@@ -170,3 +176,12 @@ the worker speaks to both flavors at runtime (`flavor := 'elasticsearch'`).
 - `_shard_doc` is intentionally unused (OpenSearch 2.x incompatibility); the `_id`
   tiebreaker is universal but slightly less efficient on very large shards than a
   numeric doc-order sort would be.
+
+---
+
+## Authorship & License
+
+Written by [Query.Farm](https://query.farm) — every VGI worker is designed and built by Query.Farm.
+
+Copyright 2026 Query Farm LLC - https://query.farm
+
