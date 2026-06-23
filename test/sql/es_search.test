@@ -1,0 +1,172 @@
+# name: test/sql/es_search.test
+# description: es_search against a dockerized OpenSearch — PIT + search_after deep
+#   pagination (cursor in externalized scan state), projection + predicate pushdown.
+# group: [vgi_elasticsearch]
+
+require-env VGI_ELASTICSEARCH_WORKER
+
+require-env VGI_ES_TEST_URL
+
+require-env VGI_ES_TEST_INDEX
+
+# haybarn-unittest does NOT autoload the extension for `require vgi` (silently
+# SKIPPED). Load it explicitly.
+statement ok
+LOAD vgi;
+
+statement ok
+INSTALL json;
+
+statement ok
+LOAD json;
+
+statement ok
+ATTACH 'elasticsearch' AS es (TYPE vgi, LOCATION '${VGI_ELASTICSEARCH_WORKER}');
+
+# ---- THE KEY TEST ----
+# The index holds 25 docs (d0001..d0025). With page_size := 4 the scan walks 7
+# Process ticks (6x4 + 1 short), carrying pit_id + the last hit's sort values in
+# EXTERNALIZED, gob-encoded scan state and resuming with search_after on each
+# tick. These assertions prove the cursor round-trips across the VGI batch
+# boundary and the full result set is returned EXACTLY ONCE — no dupes, no drops.
+
+# Every doc returned exactly once: 25 rows total.
+query I
+SELECT count(*)
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}',
+                  sort := 'n', page_size := 4);
+----
+25
+
+# Distinct ids: still 25 (no duplicates across page boundaries).
+query I
+SELECT count(DISTINCT _id)
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}',
+                  sort := 'n', page_size := 4);
+----
+25
+
+# The exact id range, ordered — proves nothing dropped and the cursor walked the
+# whole index (ids span all 7 pages).
+query T
+SELECT _id
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}',
+                  sort := 'n', page_size := 4)
+ORDER BY _id
+LIMIT 3;
+----
+d0001
+d0002
+d0003
+
+# The doc on the LAST (partial) page is present exactly once — the boundary case
+# that breaks a buggy cursor (off-by-one / re-fetch).
+query I
+SELECT count(*)
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}',
+                  sort := 'n', page_size := 4)
+WHERE _id = 'd0025';
+----
+1
+
+# A large page size returns the same 25 rows exactly once (single-page path).
+query I
+SELECT count(*)
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}',
+                  page_size := 1000);
+----
+25
+
+# ---- TYPE MAPPING ----
+# Mapping introspection types the columns: n -> BIGINT, score -> DOUBLE,
+# active -> BOOLEAN, created -> TIMESTAMPTZ, name -> VARCHAR.
+
+query I
+SELECT n FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE _id = 'd0010';
+----
+10
+
+query I
+SELECT score FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE _id = 'd0010';
+----
+5.0
+
+query I
+SELECT active FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE _id = 'd0010';
+----
+true
+
+# date maps to TIMESTAMPTZ and decodes to a real timestamp.
+query I
+SELECT typeof(created) = 'TIMESTAMP WITH TIME ZONE'
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE _id = 'd0010';
+----
+true
+
+# object field surfaces as JSON text usable via DuckDB json functions.
+query I
+SELECT meta->>'$.idx' FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE _id = 'd0007';
+----
+7
+
+# ---- PREDICATE PUSHDOWN (server-side WHERE) ----
+# group = n%3, so grp=0 is {3,6,...,24} = 8 docs. The equality predicate is
+# mapped to an ES term query and applied server-side.
+
+query I
+SELECT count(*)
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE grp = 0;
+----
+8
+
+# Range predicate -> ES range query. n >= 20 -> {20..25} = 6 docs.
+query I
+SELECT count(*)
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE n >= 20;
+----
+6
+
+# Combined range + equality, both pushed AND post-applied by DuckDB.
+query T
+SELECT _id
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE n >= 20 AND grp = 0
+ORDER BY _id;
+----
+d0021
+d0024
+
+# ---- RAW QUERY-DSL ESCAPE HATCH ----
+# A raw query is merged under bool/filter with any pushed predicates.
+
+query I
+SELECT count(*)
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}',
+                  query := '{"term":{"name":"item5"}}', page_size := 100);
+----
+1
+
+# ---- PROJECTION PUSHDOWN ----
+# Selecting only _id + n still works; _source filtering means name bytes never
+# leave the cluster (correctness is asserted in the Go live test; here we assert
+# the projected query returns correct values).
+
+query I
+SELECT n FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE _id = 'd0003';
+----
+3
+
+# ---- ERROR PATH ----
+# A bad index surfaces a clean error rather than a panic.
+
+statement error
+SELECT * FROM es.es_search('${VGI_ES_TEST_URL}', 'no_such_index_xyz', page_size := 10);
+----
