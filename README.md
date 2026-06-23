@@ -4,7 +4,9 @@
 
 <p align="center"><em>A <a href="https://query.farm">Query.Farm</a> VGI worker for DuckDB.</em></p>
 
-# vgi-elasticsearch
+# Query Elasticsearch & OpenSearch as Tables in DuckDB
+
+> **vgi-elasticsearch** · a [Query.Farm](https://query.farm) VGI worker
 
 A [VGI](https://query.farm) worker (Go) that queries an **Elasticsearch /
 OpenSearch** index as a SQL table from DuckDB. It uses **Point-In-Time (PIT) +
