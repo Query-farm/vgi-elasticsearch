@@ -43,8 +43,8 @@ func main() {
 			"source":                 "vgi-elasticsearch",
 			"vgi.title":              "Elasticsearch / OpenSearch Search Connector",
 			"vgi.keywords":           "elasticsearch, opensearch, search, full-text search, index, query DSL, point in time, PIT, search_after, deep pagination, cursor, projection pushdown, predicate pushdown, api key, lucene, es_search",
-			"vgi.description_llm":    "Query an Elasticsearch or OpenSearch index as a SQL table. The es_search table function opens a Point-In-Time and pages through every matching document with search_after, giving consistent, resumable deep pagination over millions of hits. It pushes down column projection (via _source filtering) and predicates (term/terms/range/exists via the query DSL), supports both the OpenSearch and Elasticsearch PIT dialects, basic-auth/API-key credentials, a raw query-DSL escape hatch, and explicit sort. Use it to read, filter, and join Elasticsearch/OpenSearch data from DuckDB SQL.",
-			"vgi.description_md":     "# elasticsearch\n\nQuery Elasticsearch/OpenSearch indices as SQL tables over Apache Arrow.\n\nThe `es_search(endpoint, index, ...)` table function performs consistent, resumable deep pagination using a Point-In-Time plus `search_after` cursor (the cursor is the externalized scan state, so a scan survives batch boundaries with no duplicates and no drops). It supports projection pushdown (`_source` filtering), predicate pushdown (`term`/`terms`/`range`/`exists` query DSL), a raw query-DSL escape hatch, explicit sort, basic-auth / API-key credentials, and both OpenSearch and Elasticsearch PIT dialects.\n\nTable: `es_search`.",
+			"vgi.doc_llm":            "Query an Elasticsearch or OpenSearch index as a SQL table. The es_search table function opens a Point-In-Time and pages through every matching document with search_after, giving consistent, resumable deep pagination over millions of hits. It pushes down column projection (via _source filtering) and predicates (term/terms/range/exists via the query DSL), supports both the OpenSearch and Elasticsearch PIT dialects, basic-auth/API-key credentials, a raw query-DSL escape hatch, and explicit sort. Use it to read, filter, and join Elasticsearch/OpenSearch data from DuckDB SQL.",
+			"vgi.doc_md":             "# elasticsearch\n\nQuery Elasticsearch/OpenSearch indices as SQL tables over Apache Arrow.\n\nThe `es_search(endpoint, index, ...)` table function performs consistent, resumable deep pagination using a Point-In-Time plus `search_after` cursor (the cursor is the externalized scan state, so a scan survives batch boundaries with no duplicates and no drops). It supports projection pushdown (`_source` filtering), predicate pushdown (`term`/`terms`/`range`/`exists` query DSL), a raw query-DSL escape hatch, explicit sort, basic-auth / API-key credentials, and both OpenSearch and Elasticsearch PIT dialects.\n\nTable: `es_search`.",
 			"vgi.author":             "Query.Farm",
 			"vgi.copyright":          "Copyright 2026 Query Farm LLC - https://query.farm",
 			"vgi.license":            "MIT",
@@ -60,11 +60,11 @@ func main() {
 		}),
 		vgi.WithSchemaTags(map[string]map[string]string{
 			"main": {
-				"vgi.title":           "Elasticsearch / OpenSearch — main",
-				"vgi.description_llm": "Elasticsearch/OpenSearch search functions. The es_search table function reads an index as a SQL table with consistent deep pagination (PIT + search_after), projection and predicate pushdown, sort, a raw query-DSL escape hatch, and basic-auth / API-key credentials.",
-				"vgi.description_md":  "Elasticsearch/OpenSearch search functions over Apache Arrow. Contains the `es_search` table function for reading an index as a SQL table with PIT + `search_after` deep pagination, projection/predicate pushdown, sort, and authentication.",
-				"vgi.keywords":        "elasticsearch, opensearch, es_search, search, full-text search, index, query DSL, point in time, PIT, search_after, deep pagination, projection pushdown, predicate pushdown, api key, lucene",
-				"vgi.source_url":      "https://github.com/Query-farm/vgi-elasticsearch/blob/main/internal/esworker/functions.go",
+				"vgi.title":      "Elasticsearch / OpenSearch — main",
+				"vgi.doc_llm":    "Elasticsearch/OpenSearch search functions. The es_search table function reads an index as a SQL table with consistent deep pagination (PIT + search_after), projection and predicate pushdown, sort, a raw query-DSL escape hatch, and basic-auth / API-key credentials.",
+				"vgi.doc_md":     "Elasticsearch/OpenSearch search functions over Apache Arrow. Contains the `es_search` table function for reading an index as a SQL table with PIT + `search_after` deep pagination, projection/predicate pushdown, sort, and authentication.",
+				"vgi.keywords":   "elasticsearch, opensearch, es_search, search, full-text search, index, query DSL, point in time, PIT, search_after, deep pagination, projection pushdown, predicate pushdown, api key, lucene",
+				"vgi.source_url": "https://github.com/Query-farm/vgi-elasticsearch/blob/main/internal/esworker/functions.go",
 				// VGI123 classifying tags use BARE keys (not vgi.-namespaced).
 				"domain":   "search",
 				"category": "full-text-search",
