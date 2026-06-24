@@ -50,10 +50,24 @@ jobs:
   # a prebuilt standalone `haybarn-unittest` — no C++ build. The worker queries a
   # real cluster, so a single-node OpenSearch (Apache-2.0, security disabled for
   # the test) runs as a service container. See ci/README.md.
+  #
+  # Transport matrix: the same suite runs over each transport the vgi extension
+  # supports, selected by ci/run-integration.sh's TRANSPORT env var (which
+  # changes what the .test files ATTACH as the worker LOCATION):
+  #   subprocess  worker spawned over stdio (the binary path)
+  #   http        worker started with --http, LOCATION = http://127.0.0.1:<port>
+  #   unix        worker started with --unix <sock>, LOCATION = unix://<sock>
+  # The OpenSearch service container + seed step run for ALL transports (the
+  # worker queries the live cluster on every leg). See ci/README.md for the
+  # per-transport notes.
   integration:
-    name: SQL end-to-end (haybarn)
+    name: SQL E2E (${{ matrix.transport }})
     needs: resolve-haybarn
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        transport: [subprocess, http, unix]
     services:
       opensearch:
         image: opensearchproject/opensearch:2.17.0
@@ -104,5 +118,7 @@ jobs:
           echo "HAYBARN_UNITTEST=$UNITTEST" >> "$GITHUB_ENV"
           echo "VGI_ELASTICSEARCH_WORKER=$PWD/vgi-elasticsearch-worker" >> "$GITHUB_ENV"
 
-      - name: Run extension integration suite
+      - name: Run extension integration suite (${{ matrix.transport }})
         run: ci/run-integration.sh
+        env:
+          TRANSPORT: ${{ matrix.transport }}

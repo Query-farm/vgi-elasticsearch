@@ -25,10 +25,49 @@ extension from the Haybarn community channel:
    pass-through here; `require-env` and everything else pass through untouched.
 4. **Run** — [`run-integration.sh`](run-integration.sh) waits for the cluster,
    builds + runs the repo's `seed` binary to bulk-load the fixed test index,
-   stages the preprocessed tree, points `VGI_ELASTICSEARCH_WORKER` at the built
-   worker binary, warms the extension cache once (`INSTALL vgi FROM community`),
-   then runs the suite in a single `haybarn-unittest` invocation. Any failed
-   assertion exits non-zero and fails the job.
+   resolves the worker LOCATION for the selected transport (see below), stages
+   the preprocessed tree, warms the extension cache once (`INSTALL vgi FROM
+   community`), then runs the suite in a single `haybarn-unittest` invocation.
+   Any failed assertion exits non-zero and fails the job.
+
+## Transport matrix (subprocess / http / unix)
+
+The SQL E2E runs the **full** suite over each transport the `vgi` extension
+supports, selected by `run-integration.sh`'s `TRANSPORT` env var (the CI
+`integration` job is a `transport: [subprocess, http, unix]` matrix). The
+extension picks the transport from the ATTACH `LOCATION`, so the *same* suite
+exercises a different transport just by changing what `VGI_ELASTICSEARCH_WORKER`
+resolves to:
+
+- **subprocess** (default) — `VGI_ELASTICSEARCH_WORKER` = the built worker
+  binary; the extension spawns it over stdin/stdout.
+- **http** — the script starts `<worker> --http`, which prints `PORT:<n>` on
+  stdout once listening; the script parses that and sets
+  `VGI_ELASTICSEARCH_WORKER = http://127.0.0.1:<port>` (the **bare**
+  `scheme://host:port`, no path — the extension POSTs each RPC method at
+  `<LOCATION>/<method>`). The HTTP worker-RPC rides DuckDB's `httpfs` HTTP
+  client, so for the http leg **only** the script injects `INSTALL httpfs FROM
+  core; LOAD httpfs;` after each `LOAD vgi;` in the staged tests.
+- **unix** — the script starts `<worker> --unix <sock>`, which prints
+  `UNIX:<path>` once listening, and sets `VGI_ELASTICSEARCH_WORKER =
+  unix://<sock>`.
+
+For http/unix the worker is launched **by the script** (not DuckDB) and
+trap-killed on exit. The OpenSearch service container + seed step run for **all**
+transports — the worker queries the live cluster on every leg.
+
+**No tests are gated.** The `es_search` streaming table function works over the
+stateless HTTP transport because its scan state already externalizes the scan
+position: the PIT id plus the last hit's `search_after` sort values are plain
+gob-encodable fields the framework snapshots into the HTTP continuation token
+each tick, and the worker resumes from them (one page per `Process` tick). See
+the "EXTERNALIZED scan state" comments in `internal/esworker/functions.go`.
+
+**Silent-skip guard.** The DuckDB/Haybarn sqllogictest runner *skips* (exit 0,
+not fail) any test whose error message contains an `"HTTP"`-flavoured substring,
+so a broken http leg would otherwise report "All tests were skipped" and go
+GREEN having run nothing. `run-integration.sh` fails the leg if the runner
+reports every test skipped — never trust a green http leg without it.
 
 ## The cluster
 
@@ -49,7 +88,8 @@ HAYBARN_UNITTEST=/path/to/haybarn-unittest \
 VGI_ELASTICSEARCH_WORKER="$PWD/vgi-elasticsearch-worker" \
 VGI_ES_TEST_URL="http://127.0.0.1:9209" \
 VGI_ES_TEST_INDEX="vgi_es_e2e" \
-  ci/run-integration.sh
+TRANSPORT=subprocess \
+  ci/run-integration.sh   # or TRANSPORT=http / TRANSPORT=unix
 make os-down
 ```
 
