@@ -3,7 +3,8 @@
 // Command vgi-elasticsearch-worker is a VGI worker that queries an
 // Elasticsearch/OpenSearch index as a SQL table, using Point-In-Time +
 // search_after for consistent, resumable deep pagination. It speaks the VGI
-// protocol over stdio (or HTTP with --http).
+// protocol over stdio (or HTTP with --http, or the AF_UNIX launcher transport
+// with --unix <path>).
 package main
 
 import (
@@ -17,12 +18,18 @@ import (
 )
 
 func main() {
+	// Accept --http for HTTP transport and --unix for the AF_UNIX launcher
+	// transport; default is stdio. Unknown launcher flags are tolerated (the
+	// VGI extension varies argv to key its worker cache), so we filter to flags
+	// we actually define before parsing.
 	httpMode := flag.Bool("http", false, "Run as an HTTP server instead of stdio")
+	unixPath := flag.String("unix", "", "Serve the AF_UNIX launcher transport on this socket path instead of stdio")
 	logFlags := vgi.RegisterLoggingFlags(flag.CommandLine)
 	_ = flag.CommandLine.Parse(filterKnownFlags(os.Args[1:], map[string]bool{
 		"log-level":  true,
 		"log-format": true,
 		"log-logger": true,
+		"unix":       true,
 	}))
 	if err := logFlags.Apply(); err != nil {
 		log.Fatalf("logging flags: %v", err)
@@ -39,6 +46,15 @@ func main() {
 
 	if *httpMode {
 		if err := w.RunHttp("127.0.0.1:0"); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *unixPath != "" {
+		// AF_UNIX launcher transport: serve on the given socket path. The SDK
+		// prints "UNIX:<path>" once listening; idleTimeout=0 disables the
+		// self-shutdown timer (the launcher/CI owns the process lifecycle).
+		if err := w.RunUnix(*unixPath, 0); err != nil {
 			log.Fatal(err)
 		}
 		return
