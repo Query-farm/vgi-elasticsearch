@@ -122,3 +122,27 @@ jobs:
         run: ci/run-integration.sh
         env:
           TRANSPORT: ${{ matrix.transport }}
+
+  # Metadata quality gate: build the worker and run the vgi-lint metadata-quality
+  # linter (it force-installs the signed vgi community extension itself, queries
+  # the worker's catalog/schema/function metadata, and fails on any finding at
+  # the configured severity). Kept as a separate job so it's independently visible.
+  metadata-quality:
+    name: Metadata quality (vgi-lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build the worker
+        run: go build -o vgi-elasticsearch-worker ./cmd/vgi-elasticsearch-worker
+
+      - name: vgi-lint
+        uses: Query-farm/vgi-lint-check@v1
+        with:
+          location: "${{ github.workspace }}/vgi-elasticsearch-worker"
+          fail-on: info
