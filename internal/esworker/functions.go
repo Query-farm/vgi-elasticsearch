@@ -100,6 +100,12 @@ func (f *SearchFunction) Metadata() vgi.FunctionMetadata {
 		FilterPushdown:     true,
 		Categories:         []string{"elasticsearch", "opensearch", "search", "api"},
 		Tags: map[string]string{
+			"vgi.title":               "Elasticsearch / OpenSearch Index Search",
+			"vgi.description_llm":     "Query an Elasticsearch or OpenSearch index as a SQL table. Opens a Point-In-Time and pages through every matching document with search_after for consistent, resumable deep pagination over millions of hits. Pushes down column projection (via _source filtering) and predicates (term/terms/range/exists via the query DSL), supports both the OpenSearch and Elasticsearch PIT dialects, basic-auth and API-key credentials, a raw query-DSL escape hatch, and explicit sort. Positional args: endpoint, index. Two meta columns (_id VARCHAR, _score DOUBLE) are always present; one column per source field is derived from the index mapping or the explicit fields spec.",
+			"vgi.description_md":      "Query an Elasticsearch/OpenSearch index as a SQL table over Apache Arrow.\n\n`es_search(endpoint, index, ...)` performs consistent, resumable deep pagination using a Point-In-Time plus `search_after` cursor (the externalized scan state), with `_source` projection pushdown, `term`/`terms`/`range`/`exists` predicate pushdown, a raw query-DSL escape hatch, explicit sort, basic-auth / API-key credentials, and both PIT dialects. Always emits `_id` and `_score`; one column per source field.",
+			"vgi.keywords":            "elasticsearch, opensearch, es_search, search, full-text search, index, query DSL, point in time, PIT, search_after, deep pagination, cursor, projection pushdown, predicate pushdown, api key, scroll, lucene",
+			"vgi.source_url":          "https://github.com/Query-farm/vgi-elasticsearch/blob/main/internal/esworker/functions.go",
+			"vgi.executable_examples": `[{"description":"Bind the es_search schema for an index using an explicit fields spec (no live cluster needed to resolve the column shape: _id, _score, and the declared source fields).","sql":"DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');"}]`,
 			// es_search has a DYNAMIC output schema (resolved at bind from the
 			// index mapping or the `fields` spec), so document the shape: two
 			// always-present meta columns plus one column per indexed source field.
@@ -111,15 +117,15 @@ func (f *SearchFunction) Metadata() vgi.FunctionMetadata {
 		},
 		Examples: []vgi.CatalogExample{
 			{
-				SQL:         "SELECT _id, _score, * FROM elasticsearch.main.es_search('http://localhost:9200', 'products') LIMIT 10;",
-				Description: "Read the first 10 documents from the `products` index, introspecting the index mapping to derive the column schema. The _id/_score meta columns are always present.",
+				SQL:         "DESCRIBE SELECT _id, _score, name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');",
+				Description: "Bind the column schema for the `products` index from an explicit `fields` spec. The _id/_score meta columns are always present; each declared source field becomes a typed column (here `name` VARCHAR, `price` DOUBLE).",
 			},
 			{
 				SQL:         "SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;",
 				Description: "Project only `name` and `price` (pushed down via _source filtering) with an explicit field spec, and let the `price > 100` predicate push down into the Elasticsearch query DSL.",
 			},
 			{
-				SQL:         "SELECT count(*) FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', apikey => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');",
+				SQL:         "SELECT count(*) FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', fields => 'level:keyword', api_key => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');",
 				Description: "Count error logs across the `logs-*` index pattern on an Elasticsearch cluster using API-key auth and a raw query-DSL escape hatch, paginated consistently with the Elasticsearch PIT dialect.",
 			},
 		},
