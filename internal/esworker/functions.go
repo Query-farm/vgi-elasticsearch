@@ -121,12 +121,12 @@ func (f *SearchFunction) Metadata() vgi.FunctionMetadata {
 				Description: "Bind the column schema for the `products` index from an explicit `fields` spec. The _id/_score meta columns are always present; each declared source field becomes a typed column (here `name` VARCHAR, `price` DOUBLE).",
 			},
 			{
-				SQL:         "SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;",
-				Description: "Project only `name` and `price` (pushed down via _source filtering) with an explicit field spec, and let the `price > 100` predicate push down into the Elasticsearch query DSL.",
+				SQL:         "DESCRIBE SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;",
+				Description: "Bind the schema for a projected, filtered, sorted read of the `products` index. At runtime `name`/`price` project down via _source filtering and `price > 100` pushes into the Elasticsearch query DSL; the explicit `fields` spec lets the column shape resolve without a live cluster.",
 			},
 			{
-				SQL:         "SELECT count(*) FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', fields => 'level:keyword', api_key => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');",
-				Description: "Count error logs across the `logs-*` index pattern on an Elasticsearch cluster using API-key auth and a raw query-DSL escape hatch, paginated consistently with the Elasticsearch PIT dialect.",
+				SQL:         "DESCRIBE SELECT level FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', fields => 'level:keyword', api_key => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');",
+				Description: "Bind the schema for an error-log scan over the `logs-*` index pattern on an Elasticsearch cluster, using API-key auth, the Elasticsearch PIT dialect, and a raw query-DSL escape hatch. The explicit `fields` spec resolves the column shape without contacting the cluster.",
 			},
 		},
 	}
