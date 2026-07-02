@@ -16,6 +16,34 @@ import (
 // CatalogName is the VGI catalog name advertised by this worker.
 const CatalogName = "elasticsearch"
 
+// AgentTestTasks is the catalog's `vgi.agent_test_tasks` suite (VGI152/VGI920):
+// a fixed set of analyst tasks the agent-check pass executes against the worker.
+//
+// es_search is a CONNECTOR — a live Elasticsearch/OpenSearch cluster is required
+// to actually fetch rows, but the column shape resolves entirely offline from an
+// explicit `fields` spec (parseFieldsSpec, no network). So the portable, cluster-
+// free testable surface is schema binding via `DESCRIBE SELECT ... fields => …`,
+// exactly the pattern the executable examples use. These tasks exercise that
+// deterministic mapping (ES type -> DuckDB/Arrow type, the always-present _id /
+// _score meta columns, and projection) so they pass in CI with no cluster.
+const AgentTestTasks = `[
+  {
+    "name": "describe_schema_from_fields",
+    "prompt": "Using this worker, and WITHOUT contacting a live cluster, show the full column schema that es_search exposes for an index named 'products' whose source fields are a keyword field 'name' and a double field 'price'. Pass an explicit fields spec so no network call is made, and include the always-present _id and _score meta columns. Return the DESCRIBE result.",
+    "reference_sql": "DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double')"
+  },
+  {
+    "name": "describe_typed_columns",
+    "prompt": "Using this worker and an explicit fields spec (no live cluster), determine the DuckDB column types that es_search maps an Elasticsearch 'long' field named 'n' and a 'boolean' field named 'active' to, for an index named 'events'. Return the column schema via DESCRIBE.",
+    "reference_sql": "DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'events', fields => 'n:long,active:boolean')"
+  },
+  {
+    "name": "describe_temporal_and_object_columns",
+    "prompt": "Using this worker and an explicit fields spec (no live cluster), determine the DuckDB column types that es_search assigns to an Elasticsearch 'date' field named 'created' and an 'object' field named 'meta', for an index named 'docs'. Return the full column schema via DESCRIBE SELECT *.",
+    "reference_sql": "DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'docs', fields => 'created:date,meta:object')"
+  }
+]`
+
 // IMPORTANT (gob-state gotcha): table-function scan state is gob-encoded by the
 // SDK between NewState and Process AND between successive Process ticks when the
 // scan resumes over the wire. State structs therefore hold ONLY exported,
@@ -100,11 +128,13 @@ func (f *SearchFunction) Metadata() vgi.FunctionMetadata {
 		FilterPushdown:     true,
 		Categories:         []string{"elasticsearch", "opensearch", "search", "api"},
 		Tags: map[string]string{
-			"vgi.title":               "Elasticsearch / OpenSearch Index Search",
+			"vgi.title": "Elasticsearch / OpenSearch Index Search",
+			// VGI413: names one of the schema's vgi.categories registry entries.
+			"vgi.category":            "Search",
 			"vgi.doc_llm":             "Query an Elasticsearch or OpenSearch index as a SQL table. Opens a Point-In-Time and pages through every matching document with search_after for consistent, resumable deep pagination over millions of hits. Pushes down column projection (via _source filtering) and predicates (term/terms/range/exists via the query DSL), supports both the OpenSearch and Elasticsearch PIT dialects, basic-auth and API-key credentials, a raw query-DSL escape hatch, and explicit sort. Positional args: endpoint, index. Two meta columns (_id VARCHAR, _score DOUBLE) are always present; one column per source field is derived from the index mapping or the explicit fields spec.",
 			"vgi.doc_md":              "Query an Elasticsearch/OpenSearch index as a SQL table over Apache Arrow.\n\n`es_search(endpoint, index, ...)` performs consistent, resumable deep pagination using a Point-In-Time plus `search_after` cursor (the externalized scan state), with `_source` projection pushdown, `term`/`terms`/`range`/`exists` predicate pushdown, a raw query-DSL escape hatch, explicit sort, basic-auth / API-key credentials, and both PIT dialects. Always emits `_id` and `_score`; one column per source field.",
 			"vgi.keywords":            `["elasticsearch","opensearch","es_search","search","full-text search","index","query DSL","point in time","PIT","search_after","deep pagination","cursor","projection pushdown","predicate pushdown","api key","scroll","lucene"]`,
-			"vgi.executable_examples": `[{"description":"Bind the es_search schema for an index using an explicit fields spec (no live cluster needed to resolve the column shape: _id, _score, and the declared source fields).","sql":"DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');"}]`,
+			"vgi.executable_examples": `[{"description":"Bind the es_search schema for an index using an explicit fields spec (no live cluster needed to resolve the column shape: _id, _score, and the declared source fields).","sql":"DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');"},{"description":"Bind the schema for reading only selected columns — the document _id plus one chosen source field — using an explicit fields spec so no live cluster is contacted. DESCRIBE returns just the projected columns.","sql":"DESCRIBE SELECT _id, level FROM elasticsearch.main.es_search('http://localhost:9200', 'logs', fields => 'level:keyword');"}]`,
 			// es_search has a DYNAMIC output schema (resolved at bind from the
 			// index mapping or the `fields` spec), so document the shape: two
 			// always-present meta columns plus one column per indexed source field.
