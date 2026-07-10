@@ -29,18 +29,28 @@ const CatalogName = "elasticsearch"
 const AgentTestTasks = `[
   {
     "name": "describe_schema_from_fields",
-    "prompt": "Using this worker, and WITHOUT contacting a live cluster, show the full column schema that es_search exposes for an index named 'products' whose source fields are a keyword field 'name' and a double field 'price'. Pass an explicit fields spec so no network call is made, and include the always-present _id and _score meta columns. Return the DESCRIBE result.",
-    "reference_sql": "DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double')"
-  },
-  {
-    "name": "describe_typed_columns",
-    "prompt": "Using this worker and an explicit fields spec (no live cluster), determine the DuckDB column types that es_search maps an Elasticsearch 'long' field named 'n' and a 'boolean' field named 'active' to, for an index named 'events'. Return the column schema via DESCRIBE.",
-    "reference_sql": "DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'events', fields => 'n:long,active:boolean')"
+    "prompt": "This worker exposes an es_search table function in the elasticsearch.main schema. WITHOUT contacting a live cluster, determine the full set of columns es_search exposes for an index named 'products' whose source fields are a keyword field 'name' and a double field 'price'. Pass an explicit fields spec so no network call is made. Return exactly two columns, column_name and column_type, one row per exposed column (including the always-present _id and _score meta columns), in the order es_search exposes them.",
+    "reference_sql": "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double'))"
   },
   {
     "name": "describe_temporal_and_object_columns",
-    "prompt": "Using this worker and an explicit fields spec (no live cluster), determine the DuckDB column types that es_search assigns to an Elasticsearch 'date' field named 'created' and an 'object' field named 'meta', for an index named 'docs'. Return the full column schema via DESCRIBE SELECT *.",
-    "reference_sql": "DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'docs', fields => 'created:date,meta:object')"
+    "prompt": "This worker exposes an es_search table function in the elasticsearch.main schema. WITHOUT contacting a live cluster (use an explicit fields spec), determine the DuckDB column types es_search assigns to an Elasticsearch 'date' field named 'created' and an 'object' field named 'meta', for an index named 'docs'. Return exactly two columns, column_name and column_type, one row per exposed column (including the always-present _id and _score meta columns), in the order es_search exposes them.",
+    "reference_sql": "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'docs', fields => 'created:date,meta:object'))"
+  },
+  {
+    "name": "type_mapping_integer_boolean",
+    "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, return the DuckDB column type es_search assigns to the Elasticsearch field types 'long' and 'boolean'. Return exactly two columns, es_type and duckdb_type, ordered by es_type.",
+    "reference_sql": "SELECT es_type, duckdb_type FROM elasticsearch.main.es_type_mapping WHERE es_type IN ('long','boolean') ORDER BY es_type"
+  },
+  {
+    "name": "type_mapping_json_family",
+    "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, list every Elasticsearch field type that es_search surfaces as raw JSON text — the rows whose category is 'json'. Return a single column es_type, ordered alphabetically by es_type.",
+    "reference_sql": "SELECT es_type FROM elasticsearch.main.es_type_mapping WHERE category = 'json' ORDER BY es_type"
+  },
+  {
+    "name": "type_mapping_temporal_target",
+    "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, find the single DuckDB type that es_search maps every temporal Elasticsearch field type (category 'temporal') onto. Return one column, duckdb_type, with the single distinct value.",
+    "reference_sql": "SELECT DISTINCT duckdb_type FROM elasticsearch.main.es_type_mapping WHERE category = 'temporal'"
   }
 ]`
 
@@ -136,13 +146,24 @@ func (f *SearchFunction) Metadata() vgi.FunctionMetadata {
 			"vgi.keywords":            `["elasticsearch","opensearch","es_search","search","full-text search","index","query DSL","point in time","PIT","search_after","deep pagination","cursor","projection pushdown","predicate pushdown","api key","scroll","lucene"]`,
 			"vgi.executable_examples": `[{"description":"Bind the es_search schema for an index using an explicit fields spec (no live cluster needed to resolve the column shape: _id, _score, and the declared source fields).","sql":"DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');"},{"description":"Bind the schema for reading only selected columns — the document _id plus one chosen source field — using an explicit fields spec so no live cluster is contacted. DESCRIBE returns just the projected columns.","sql":"DESCRIBE SELECT _id, level FROM elasticsearch.main.es_search('http://localhost:9200', 'logs', fields => 'level:keyword');"}]`,
 			// es_search has a DYNAMIC output schema (resolved at bind from the
-			// index mapping or the `fields` spec), so document the shape: two
-			// always-present meta columns plus one column per indexed source field.
-			"vgi.result_columns_md": "| column | type | description |\n" +
+			// index mapping or the `fields` spec), so declare it with the
+			// structured dynamic-columns tag (VGI307): the two always-present meta
+			// columns, then one representative per-source-field variant. The
+			// exact source columns and their types are argument-dependent; the
+			// es_type_mapping view enumerates every ES-type -> DuckDB-type rule.
+			"vgi.result_dynamic_columns_md": "The result always begins with two meta columns, then adds one column per indexed source field (from the explicit `fields` spec, or the introspected index mapping when `fields` is omitted). The per-field DuckDB type follows the `es_type_mapping` reference view.\n\n" +
+				"## Always-present meta columns\n\n" +
+				"| Name | Type | Description |\n" +
 				"|---|---|---|\n" +
 				"| `_id` | VARCHAR | The Elasticsearch/OpenSearch document `_id`. Always present. |\n" +
-				"| `_score` | DOUBLE | The relevance score for the hit (NULL when sorting suppresses scoring). Always present. |\n" +
-				"| _<source field>_ | _(mapped from ES type)_ | One column per indexed source field — either the explicit `fields` spec or, when omitted, the introspected index mapping. ES `keyword`/`text`→VARCHAR, `long`/`integer`→BIGINT, `double`/`float`→DOUBLE, `boolean`→BOOLEAN, `date`→TIMESTAMP (UTC, microseconds); `object`/`nested` are emitted as JSON VARCHAR. |",
+				"| `_score` | DOUBLE | The relevance score for the hit; NULL when sorting suppresses scoring. Always present. |\n\n" +
+				"## Source columns (example: `fields => 'name:keyword,price:double,created:date,meta:object'`)\n\n" +
+				"| Name | Type | Description |\n" +
+				"|---|---|---|\n" +
+				"| `name` | VARCHAR | An ES `keyword`/`text` field. |\n" +
+				"| `price` | DOUBLE | An ES `double`/`float` field. |\n" +
+				"| `created` | TIMESTAMP WITH TIME ZONE | An ES `date`/`date_nanos` field, parsed to a UTC microsecond timestamp. |\n" +
+				"| `meta` | VARCHAR | An ES `object`/`nested`/`geo_*` field, surfaced as raw JSON text. |",
 		},
 		Examples: []vgi.CatalogExample{
 			{
