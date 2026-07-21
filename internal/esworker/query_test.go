@@ -286,6 +286,24 @@ func TestSourceIncludesSkipsMeta(t *testing.T) {
 	}
 }
 
+// TestOptsFromArgsNamesMatchSpecs guards the bind-time auth lookup: optsFromArgs
+// reads named options by their SDK-derived (snake_case) argument names, so every
+// key it looks up MUST exist in the ArgSpec set derived from searchArgs. A field
+// rename (e.g. APIKey -> api_key) that isn't mirrored in optsFromArgs would
+// silently drop that credential at mapping introspection — this catches it.
+func TestOptsFromArgsNamesMatchSpecs(t *testing.T) {
+	specNames := map[string]bool{}
+	for _, s := range vgi.DeriveArgSpecs(searchArgs{}) {
+		specNames[s.Name] = true
+	}
+	// The named options optsFromArgs resolves via GetScalarString/GetScalarBool.
+	for _, k := range []string{"flavor", "username", "password", "api_key", "insecure_tls"} {
+		if !specNames[k] {
+			t.Errorf("optsFromArgs reads named option %q but no ArgSpec has that name; derived names: %v", k, specNames)
+		}
+	}
+}
+
 func colNames(cols []Column) []string {
 	out := make([]string, len(cols))
 	for i, c := range cols {

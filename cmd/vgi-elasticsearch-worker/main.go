@@ -73,7 +73,7 @@ func main() {
 					"- **Projection and predicate pushdown**: only requested fields are fetched via `_source` filtering, and `term`/`terms`/`range`/`exists` filters compile into the query DSL, with a raw query-DSL escape hatch for anything more advanced.\n" +
 					"- **Both dialects and authentication**: the OpenSearch and Elasticsearch PIT dialects, plus basic-auth and API-key credentials.\n\n" +
 					"## When to use it\n\n" +
-					"Reach for this schema to explore or aggregate log and product indices, join search hits against local DuckDB tables or Parquet files, or export filtered subsets — without writing application code. List the schema to discover its functions, or browse them by category.",
+					"Reach for this schema to explore or aggregate log and product indices, join search hits against local DuckDB tables or Parquet files, or export filtered subsets — without writing application code.",
 				"vgi.keywords": `["elasticsearch","opensearch","es_search","search","full-text search","index","query DSL","point in time","PIT","search_after","deep pagination","projection pushdown","predicate pushdown","api key","lucene"]`,
 				// VGI413 category registry: an ordered list of navigation sections;
 				// each object carries a matching `vgi.category` naming one of these.
@@ -85,10 +85,9 @@ func main() {
 				"domain":   "search",
 				"category": "full-text-search",
 				"topic":    "elasticsearch-opensearch-pagination",
-				// VGI506 representative example queries (a plain string of SQL).
-				"vgi.example_queries": "DESCRIBE SELECT _id, _score, name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');\n" +
-					"DESCRIBE SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;\n" +
-					"DESCRIBE SELECT level FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', fields => 'level:keyword', api_key => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');",
+				// VGI515 described-example list: each example carries a human-readable
+				// description alongside its SQL (a JSON [{description,sql}] array).
+				"vgi.example_queries": `[{"description":"Bind the column schema for the products index from an explicit fields spec: the _id/_score meta columns plus one typed column per declared source field.","sql":"DESCRIBE SELECT _id, _score, name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');"},{"description":"Bind the schema for a projected, filtered, sorted read of the products index — name/price project down via _source filtering and price > 100 pushes into the query DSL.","sql":"DESCRIBE SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;"},{"description":"Bind the schema for an error-log scan over the logs-* index pattern on an Elasticsearch cluster, using API-key auth, the Elasticsearch PIT dialect, and a raw query-DSL escape hatch.","sql":"DESCRIBE SELECT level FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', fields => 'level:keyword', api_key => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');"}]`,
 			},
 		}),
 	)

@@ -141,10 +141,14 @@ func (f *SearchFunction) Metadata() vgi.FunctionMetadata {
 			"vgi.title": "Elasticsearch / OpenSearch Index Search",
 			// VGI413: names one of the schema's vgi.categories registry entries.
 			"vgi.category":            "Search",
-			"vgi.doc_llm":             "Query an Elasticsearch or OpenSearch index as a SQL table. Opens a Point-In-Time and pages through every matching document with search_after for consistent, resumable deep pagination over millions of hits. Pushes down column projection (via _source filtering) and predicates (term/terms/range/exists via the query DSL), supports both the OpenSearch and Elasticsearch PIT dialects, basic-auth and API-key credentials, a raw query-DSL escape hatch, and explicit sort. Positional args: endpoint, index. Two meta columns (_id VARCHAR, _score DOUBLE) are always present; one column per source field is derived from the index mapping or the explicit fields spec.",
+			"vgi.doc_llm":             "Query an Elasticsearch or OpenSearch index as a SQL table. Opens a Point-In-Time and pages through every matching document with search_after for consistent, resumable deep pagination over millions of hits. Pushes down column projection (via _source filtering) and predicates (term/terms/range/exists via the query DSL), supports both the OpenSearch and Elasticsearch PIT dialects, basic-auth and API-key credentials, a raw query-DSL escape hatch, and explicit sort. Positional args: endpoint, index. Two meta columns (_id `VARCHAR`, _score `DOUBLE`) are always present; one column per source field is derived from the index mapping or the explicit fields spec.",
 			"vgi.doc_md":              "Query an Elasticsearch/OpenSearch index as a SQL table over Apache Arrow.\n\n`es_search(endpoint, index, ...)` performs consistent, resumable deep pagination using a Point-In-Time plus `search_after` cursor (the externalized scan state), with `_source` projection pushdown, `term`/`terms`/`range`/`exists` predicate pushdown, a raw query-DSL escape hatch, explicit sort, basic-auth / API-key credentials, and both PIT dialects. Always emits `_id` and `_score`; one column per source field.",
 			"vgi.keywords":            `["elasticsearch","opensearch","es_search","search","full-text search","index","query DSL","point in time","PIT","search_after","deep pagination","cursor","projection pushdown","predicate pushdown","api key","scroll","lucene"]`,
 			"vgi.executable_examples": `[{"description":"Bind the es_search schema for an index using an explicit fields spec (no live cluster needed to resolve the column shape: _id, _score, and the declared source fields).","sql":"DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');"},{"description":"Bind the schema for reading only selected columns — the document _id plus one chosen source field — using an explicit fields spec so no live cluster is contacted. DESCRIBE returns just the projected columns.","sql":"DESCRIBE SELECT _id, level FROM elasticsearch.main.es_search('http://localhost:9200', 'logs', fields => 'level:keyword');"}]`,
+			// VGI515: described-example list. The native duckdb_functions().examples
+			// carrier drops the per-example description, so the described copy lives
+			// here (kept byte-identical in SQL to the Examples below).
+			"vgi.example_queries": `[{"description":"Bind the column schema for the products index from an explicit fields spec. The _id/_score meta columns are always present; each declared source field becomes a typed column (here name is ` + "`VARCHAR`" + `, price is ` + "`DOUBLE`" + `).","sql":"DESCRIBE SELECT _id, _score, name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');"},{"description":"Bind the schema for a projected, filtered, sorted read of the products index. At runtime name/price project down via _source filtering and price > 100 pushes into the Elasticsearch query DSL; the explicit fields spec lets the column shape resolve without a live cluster.","sql":"DESCRIBE SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;"},{"description":"Bind the schema for an error-log scan over the logs-* index pattern on an Elasticsearch cluster, using API-key auth, the Elasticsearch PIT dialect, and a raw query-DSL escape hatch. The explicit fields spec resolves the column shape without contacting the cluster.","sql":"DESCRIBE SELECT level FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', fields => 'level:keyword', api_key => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');"}]`,
 			// es_search has a DYNAMIC output schema (resolved at bind from the
 			// index mapping or the `fields` spec), so declare it with the
 			// structured dynamic-columns tag (VGI307): the two always-present meta
@@ -280,8 +284,8 @@ func optsFromArgs(args *vgi.Arguments, endpoint, _ string) Options {
 		Flavor:      flavor,
 		Username:    get("username"),
 		Password:    get("password"),
-		APIKey:      get("apikey"),
-		InsecureTLS: getBool("insecuretls"),
+		APIKey:      get("api_key"),
+		InsecureTLS: getBool("insecure_tls"),
 	}
 }
 
