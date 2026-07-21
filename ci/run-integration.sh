@@ -53,7 +53,23 @@ set -euo pipefail
 
 : "${HAYBARN_UNITTEST:?path to the haybarn-unittest binary}"
 : "${VGI_ELASTICSEARCH_WORKER:?worker LOCATION (the built Go worker binary)}"
-: "${VGI_ES_TEST_URL:?base URL of the OpenSearch/Elasticsearch cluster}"
+
+# SKIP_MOCK (default empty): when set to a non-empty value, run ONLY the cluster-
+# free surface — skip the VGI_ES_TEST_URL requirement, the cluster-readiness
+# wait, and the seed step. Used by the Docker image_test, which exercises the
+# image's transports against the offline test (es_type_mapping view + an offline
+# `fields =>` schema bind) with no Elasticsearch/OpenSearch cluster available.
+# Empty (the default) preserves the full live-cluster behaviour unchanged.
+SKIP_MOCK="${SKIP_MOCK:-}"
+if [ -z "$SKIP_MOCK" ]; then
+  : "${VGI_ES_TEST_URL:?base URL of the OpenSearch/Elasticsearch cluster}"
+fi
+
+# TEST_PATTERN (default test/sql/*): the haybarn glob of staged tests to run.
+# Override it to run only the offline subset (e.g. test/sql/offline.test) when
+# SKIP_MOCK is set. Staging always preprocesses every test/sql/*.test file; this
+# only selects which of them the runner executes.
+TEST_PATTERN="${TEST_PATTERN:-test/sql/*}"
 
 TRANSPORT="${TRANSPORT:-subprocess}"
 case "$TRANSPORT" in
@@ -88,25 +104,30 @@ cleanup() {
 trap cleanup EXIT
 
 # --- Wait for the cluster to answer, then seed the fixed test index ----------
-echo "Waiting for OpenSearch/Elasticsearch at $VGI_ES_TEST_URL ..."
-READY=""
-for _ in $(seq 1 60); do
-  if curl -fs "$VGI_ES_TEST_URL/_cluster/health" >/dev/null 2>&1; then
-    READY=1; break
+# Skipped entirely when SKIP_MOCK is set (offline surface only — no cluster).
+if [ -z "$SKIP_MOCK" ]; then
+  echo "Waiting for OpenSearch/Elasticsearch at $VGI_ES_TEST_URL ..."
+  READY=""
+  for _ in $(seq 1 60); do
+    if curl -fs "$VGI_ES_TEST_URL/_cluster/health" >/dev/null 2>&1; then
+      READY=1; break
+    fi
+    sleep 2
+  done
+  if [ -z "$READY" ]; then
+    echo "ERROR: cluster did not become ready at $VGI_ES_TEST_URL" >&2
+    exit 1
   fi
-  sleep 2
-done
-if [ -z "$READY" ]; then
-  echo "ERROR: cluster did not become ready at $VGI_ES_TEST_URL" >&2
-  exit 1
-fi
-echo "Cluster is up."
+  echo "Cluster is up."
 
-SEED_BIN="$STAGE/seed"
-echo "Building seeder ..."
-( cd "$REPO" && go build -o "$SEED_BIN" ./cmd/seed )
-echo "Seeding index '$VGI_ES_TEST_INDEX' ($SEED_COUNT docs) ..."
-"$SEED_BIN" --url "$VGI_ES_TEST_URL" --index "$VGI_ES_TEST_INDEX" --count "$SEED_COUNT"
+  SEED_BIN="$STAGE/seed"
+  echo "Building seeder ..."
+  ( cd "$REPO" && go build -o "$SEED_BIN" ./cmd/seed )
+  echo "Seeding index '$VGI_ES_TEST_INDEX' ($SEED_COUNT docs) ..."
+  "$SEED_BIN" --url "$VGI_ES_TEST_URL" --index "$VGI_ES_TEST_INDEX" --count "$SEED_COUNT"
+else
+  echo "SKIP_MOCK set: skipping cluster wait + seed (cluster-free surface only)."
+fi
 
 # --- Per-transport: resolve VGI_ELASTICSEARCH_WORKER (the ATTACH LOCATION) ----
 # subprocess keeps the binary path (extension spawns stdio). http/unix start the
@@ -117,6 +138,16 @@ case "$TRANSPORT" in
     ;;
 
   http)
+    # Pre-launched HTTP hook: if the provided worker LOCATION is already an
+    # http(s):// URL, the worker is served out-of-band (e.g. a warm Docker
+    # container the caller started + health-checked). Use it verbatim — do NOT
+    # try to launch a local binary (there may be none on the runner).
+    case "$WORKER_BIN" in
+      http://*|https://*)
+        export VGI_ELASTICSEARCH_WORKER="$WORKER_BIN"
+        echo "Transport: http — using pre-launched worker at $VGI_ELASTICSEARCH_WORKER"
+        ;;
+      *)
     # Start the worker in --http mode; it prints "PORT:<n>" once listening.
     WORKER_PORT_FILE="$(mktemp)"
     echo "Transport: http — starting '$WORKER_BIN --http' ..."
@@ -142,6 +173,8 @@ case "$TRANSPORT" in
     # 404 — which the runner silently skips as an error "matching 'HTTP'".
     export VGI_ELASTICSEARCH_WORKER="http://127.0.0.1:$WPORT"
     echo "HTTP worker listening on $VGI_ELASTICSEARCH_WORKER (pid $WORKER_PID)"
+        ;;
+    esac
     ;;
 
   unix)
@@ -228,10 +261,10 @@ rm -f "$STAGE/test/_warm.test"
 # "All tests were skipped" and the job would go GREEN having run nothing — a
 # fake pass. We detect that and fail explicitly. A real run prints
 # "All tests passed (N assertions ...)".
-echo "Running suite (transport: $TRANSPORT, worker: $VGI_ELASTICSEARCH_WORKER) ..."
+echo "Running suite (transport: $TRANSPORT, pattern: $TEST_PATTERN, worker: $VGI_ELASTICSEARCH_WORKER) ..."
 RUN_LOG="$STAGE/run.log"
 set +e
-"$HAYBARN_UNITTEST" "test/sql/*" 2>&1 | tee "$RUN_LOG"
+"$HAYBARN_UNITTEST" "$TEST_PATTERN" 2>&1 | tee "$RUN_LOG"
 RUN_RC="${PIPESTATUS[0]}"
 set -e
 

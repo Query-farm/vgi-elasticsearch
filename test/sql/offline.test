@@ -1,0 +1,55 @@
+# name: test/sql/offline.test
+# description: cluster-free surface of the es worker — ATTACH, the es_type_mapping
+#   reference view, and an offline es_search schema bind from an explicit `fields`
+#   spec. Needs NO Elasticsearch/OpenSearch cluster, so the Docker image_test can
+#   exercise the image's transports (stdio + HTTP) with no backend running.
+# group: [vgi_elasticsearch]
+
+require-env VGI_ELASTICSEARCH_WORKER
+
+# haybarn-unittest does NOT autoload the extension for `require vgi` (silently
+# SKIPPED). Load it explicitly.
+statement ok
+LOAD vgi;
+
+statement ok
+ATTACH 'elasticsearch' AS es (TYPE vgi, LOCATION '${VGI_ELASTICSEARCH_WORKER}');
+
+# ---- CLUSTER-FREE REFERENCE VIEW ----
+# es_type_mapping is a self-contained (literal-rows) view: no cluster, no scan RPC.
+
+query I
+SELECT count(*) FROM es.main.es_type_mapping;
+----
+22
+
+query T
+SELECT duckdb_type FROM es.main.es_type_mapping WHERE es_type = 'long';
+----
+BIGINT
+
+query T
+SELECT duckdb_type FROM es.main.es_type_mapping WHERE es_type = 'boolean';
+----
+BOOLEAN
+
+query T
+SELECT duckdb_type FROM es.main.es_type_mapping WHERE es_type = 'date';
+----
+TIMESTAMP WITH TIME ZONE
+
+# ---- OFFLINE SCHEMA BIND (explicit `fields` spec, no network) ----
+# es_search resolves its column shape from the `fields` spec with no cluster
+# call: the always-present _id/_score meta columns plus one typed column per
+# declared source field (keyword -> VARCHAR, double -> DOUBLE).
+
+query TT
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM es.main.es_search('http://localhost:9200', 'products',
+                                               fields => 'name:keyword,price:double'))
+ORDER BY column_name;
+----
+_id	VARCHAR
+_score	DOUBLE
+name	VARCHAR
+price	DOUBLE

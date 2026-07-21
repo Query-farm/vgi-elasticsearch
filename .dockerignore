@@ -1,0 +1,25 @@
+# Keep the build context small: the Dockerfile only needs go.mod/go.sum + the
+# cmd/ and internal/ Go sources. Everything below is rebuilt inside the image,
+# pulled from the module cache, or irrelevant to the build.
+.git
+.github
+.gitignore
+.dockerignore
+docs
+test
+ci
+duckdb_unittest_tempdir
+.vgi-review-cache.json
+.vgi-sim-cache.json
+# Prebuilt local binaries (large; rebuilt inside the image).
+/vgi-elasticsearch-worker
+/seed
+**/*_test.go
+**/*.test
+*.out
+coverage.out
+.DS_Store
+README.md
+CLAUDE.md
+Makefile
+LICENSE
