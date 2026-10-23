@@ -4,6 +4,7 @@ package esworker
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -93,27 +94,48 @@ func TestBuildSearchBodyRawQuery(t *testing.T) {
 // --- predicate pushdown -----------------------------------------------------
 //
 // The SDK's filter structs have unexported fields, so an external test builds
-// filters via the wire format and DeserializeFilters — which also exercises the
-// real deserialization path the worker uses in NewState.
+// filters via the Filter Encoding v2 wire format and DeserializeFiltersWithSchema
+// — the same decoding the SDK performs before NewState to populate
+// ProcessParams.CurrentPushdownFilters.
 
-// filterBatch builds a pushdown-filter RecordBatch from a JSON spec list and a
-// set of value columns, mirroring what DuckDB sends. Column 0 is the JSON specs
-// (carrying the vgi_filter_version metadata); columns 1..N are value_ref slots.
-func filterBatch(t *testing.T, specsJSON string, values ...arrow.Array) arrow.RecordBatch {
+// filterBindSchema is the unprojected bind output schema the test predicates'
+// column_ref nodes are validated against (column_index 0..2).
+var filterBindSchema = arrow.NewSchema([]arrow.Field{
+	{Name: "name", Type: arrow.BinaryTypes.String, Nullable: true},
+	{Name: "n", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+	{Name: "tag", Type: arrow.BinaryTypes.String, Nullable: true},
+}, nil)
+
+// filterBatch builds a v2 pushdown-filter RecordBatch holding one required
+// predicate with the given expression JSON, mirroring what DuckDB sends. Column
+// 0 is the filter_spec snapshot document (the schema carries the v2 encoding
+// metadata); columns 1..N are the value_<i> literal payload slots.
+func filterBatch(t *testing.T, exprJSON string, values ...arrow.Array) arrow.RecordBatch {
 	t.Helper()
 	mem := memory.DefaultAllocator
-	md := arrow.NewMetadata([]string{"vgi_filter_version"}, []string{"1"})
-	fields := []arrow.Field{{Name: "specs", Type: arrow.BinaryTypes.String, Metadata: md}}
+	doc := `{"encoding":"vgi.filters.v2","semantics":"vgi.duckdb.standard.v1","kind":"snapshot",` +
+		`"predicates":[{"id":"p0","revision":0,"mode":"required","source":"query","expression":` + exprJSON + `}]}`
+	md := arrow.NewMetadata(
+		[]string{"vgi_filter_encoding", "vgi_filter_version", "vgi_evaluation_context"},
+		[]string{"vgi.filters.v2", "2", "vgi.none.v1"},
+	)
+	fields := []arrow.Field{{Name: "filter_spec", Type: arrow.BinaryTypes.String}}
 	cols := make([]arrow.Array, 0, len(values)+1)
 	sb := array.NewStringBuilder(mem)
-	sb.Append(specsJSON)
+	sb.Append(doc)
 	cols = append(cols, sb.NewArray())
 	for i, v := range values {
-		fields = append(fields, arrow.Field{Name: "v" + string(rune('0'+i)), Type: v.DataType()})
+		fields = append(fields, arrow.Field{Name: fmt.Sprintf("value_%d", i), Type: v.DataType(), Nullable: true})
 		cols = append(cols, v)
 	}
-	schema := arrow.NewSchema(fields, nil)
+	schema := arrow.NewSchema(fields, &md)
 	return array.NewRecordBatch(schema, cols, 1)
+}
+
+// cmpExpr renders a v2 `column <op> literal(value_0)` comparison node.
+func cmpExpr(op string, colIndex int, colName string) string {
+	return fmt.Sprintf(`{"node":"comparison","op":%q,"left":{"node":"column_ref","column_index":%d,"column_name":%q},"right":{"node":"literal","value_ref":0}}`,
+		op, colIndex, colName)
 }
 
 func strArr(vs ...string) arrow.Array {
@@ -131,20 +153,20 @@ func i64Arr(vs ...int64) arrow.Array {
 	return b.NewArray()
 }
 
-func deserialize(t *testing.T, specsJSON string, values ...arrow.Array) *vgi.PushdownFilters {
+func deserialize(t *testing.T, exprJSON string, values ...arrow.Array) *vgi.PushdownFilters {
 	t.Helper()
-	batch := filterBatch(t, specsJSON, values...)
+	batch := filterBatch(t, exprJSON, values...)
 	defer batch.Release()
-	pf, err := vgi.DeserializeFilters(batch)
+	pf, err := vgi.DeserializeFiltersWithSchema(batch, filterBindSchema, nil)
 	if err != nil {
-		t.Fatalf("DeserializeFilters: %v", err)
+		t.Fatalf("DeserializeFiltersWithSchema: %v", err)
 	}
 	return pf
 }
 
 func TestPushdownEquality(t *testing.T) {
 	pf := deserialize(t,
-		`[{"type":"constant","column_name":"name","column_index":0,"op":"eq","value_ref":0}]`,
+		cmpExpr("eq", 0, "name"),
 		strArr("alice"))
 	q, pushed := BuildQueryFromFilters(pf)
 	if _, ok := pushed["name"]; !ok {
@@ -159,7 +181,7 @@ func TestPushdownEquality(t *testing.T) {
 
 func TestPushdownNotEqualGoesToMustNot(t *testing.T) {
 	pf := deserialize(t,
-		`[{"type":"constant","column_name":"name","column_index":0,"op":"ne","value_ref":0}]`,
+		cmpExpr("ne", 0, "name"),
 		strArr("bob"))
 	q, _ := BuildQueryFromFilters(pf)
 	mn, ok := q["bool"].(map[string]any)["must_not"].([]any)
@@ -170,7 +192,7 @@ func TestPushdownNotEqualGoesToMustNot(t *testing.T) {
 
 func TestPushdownRange(t *testing.T) {
 	pf := deserialize(t,
-		`[{"type":"constant","column_name":"n","column_index":1,"op":"ge","value_ref":0}]`,
+		cmpExpr("ge", 1, "n"),
 		i64Arr(3))
 	q, pushed := BuildQueryFromFilters(pf)
 	if _, ok := pushed["n"]; !ok {
@@ -184,7 +206,7 @@ func TestPushdownRange(t *testing.T) {
 }
 
 // strListArr builds a List<String> array of one row containing vs — the shape
-// an IN filter's value_ref column takes (a list scalar).
+// a literal IN set's value_ref payload takes (a list scalar).
 func strListArr(vs ...string) arrow.Array {
 	b := array.NewListBuilder(memory.DefaultAllocator, arrow.BinaryTypes.String)
 	vb := b.ValueBuilder().(*array.StringBuilder)
@@ -197,7 +219,7 @@ func strListArr(vs ...string) arrow.Array {
 
 func TestPushdownIn(t *testing.T) {
 	pf := deserialize(t,
-		`[{"type":"in","column_name":"tag","column_index":2,"value_ref":0}]`,
+		`{"node":"in","expression":{"node":"column_ref","column_index":2,"column_name":"tag"},"set":{"kind":"literal","value_ref":0},"negated":false}`,
 		strListArr("a", "b"))
 	q, pushed := BuildQueryFromFilters(pf)
 	if _, ok := pushed["tag"]; !ok {

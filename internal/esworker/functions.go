@@ -18,6 +18,9 @@ const CatalogName = "elasticsearch"
 
 // AgentTestTasks is the catalog's `vgi.agent_test_tasks` suite (VGI152/VGI920):
 // a fixed set of analyst tasks the agent-check pass executes against the worker.
+// The tag carries only {name, prompt}; each task's private reference_sql grader
+// lives in the vgi-agent-tests.yaml sidecar at the repo root, keyed by task name,
+// so it is never exposed in the catalog (VGI416).
 //
 // es_search is a CONNECTOR — a live Elasticsearch/OpenSearch cluster is required
 // to actually fetch rows, but the column shape resolves entirely offline from an
@@ -29,28 +32,23 @@ const CatalogName = "elasticsearch"
 const AgentTestTasks = `[
   {
     "name": "describe_schema_from_fields",
-    "prompt": "This worker exposes an es_search table function in the elasticsearch.main schema. WITHOUT contacting a live cluster, determine the full set of columns es_search exposes for an index named 'products' whose source fields are a keyword field 'name' and a double field 'price'. Pass an explicit fields spec so no network call is made. Return exactly two columns, column_name and column_type, one row per exposed column (including the always-present _id and _score meta columns), in the order es_search exposes them.",
-    "reference_sql": "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double'))"
+    "prompt": "This worker exposes an es_search table function in the elasticsearch.main schema. WITHOUT contacting a live cluster, determine the full set of columns es_search exposes for an index named 'products' whose source fields are a keyword field 'name' and a double field 'price'. Pass an explicit fields spec so no network call is made. Return exactly two columns, column_name and column_type, one row per exposed column (including the always-present _id and _score meta columns), in the order es_search exposes them."
   },
   {
     "name": "describe_temporal_and_object_columns",
-    "prompt": "This worker exposes an es_search table function in the elasticsearch.main schema. WITHOUT contacting a live cluster (use an explicit fields spec), determine the DuckDB column types es_search assigns to an Elasticsearch 'date' field named 'created' and an 'object' field named 'meta', for an index named 'docs'. Return exactly two columns, column_name and column_type, one row per exposed column (including the always-present _id and _score meta columns), in the order es_search exposes them.",
-    "reference_sql": "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'docs', fields => 'created:date,meta:object'))"
+    "prompt": "This worker exposes an es_search table function in the elasticsearch.main schema. WITHOUT contacting a live cluster (use an explicit fields spec), determine the DuckDB column types es_search assigns to an Elasticsearch 'date' field named 'created' and an 'object' field named 'meta', for an index named 'docs'. Return exactly two columns, column_name and column_type, one row per exposed column (including the always-present _id and _score meta columns), in the order es_search exposes them."
   },
   {
     "name": "type_mapping_integer_boolean",
-    "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, return the DuckDB column type es_search assigns to the Elasticsearch field types 'long' and 'boolean'. Return exactly two columns, es_type and duckdb_type, ordered by es_type.",
-    "reference_sql": "SELECT es_type, duckdb_type FROM elasticsearch.main.es_type_mapping WHERE es_type IN ('long','boolean') ORDER BY es_type"
+    "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, return the DuckDB column type es_search assigns to the Elasticsearch field types 'long' and 'boolean'. Return exactly two columns, es_type and duckdb_type, ordered by es_type."
   },
   {
     "name": "type_mapping_json_family",
-    "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, list every Elasticsearch field type that es_search surfaces as raw JSON text — the rows whose category is 'json'. Return a single column es_type, ordered alphabetically by es_type.",
-    "reference_sql": "SELECT es_type FROM elasticsearch.main.es_type_mapping WHERE category = 'json' ORDER BY es_type"
+    "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, list every Elasticsearch field type that es_search surfaces as raw JSON text — the rows whose category is 'json'. Return a single column es_type, ordered alphabetically by es_type."
   },
   {
     "name": "type_mapping_temporal_target",
-    "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, find the single DuckDB type that es_search maps every temporal Elasticsearch field type (category 'temporal') onto. Return one column, duckdb_type, with the single distinct value.",
-    "reference_sql": "SELECT DISTINCT duckdb_type FROM elasticsearch.main.es_type_mapping WHERE category = 'temporal'"
+    "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, find the single DuckDB type that es_search maps every temporal Elasticsearch field type (category 'temporal') onto. Return one column, duckdb_type, with the single distinct value."
   }
 ]`
 
@@ -345,11 +343,9 @@ func (f *SearchFunction) NewState(params *vgi.ProcessParams) (*searchState, erro
 	// merge it with the raw-DSL escape hatch. Columns fully pushed to the server
 	// are logged; DuckDB still re-applies all filters (AutoApplyFilters is off),
 	// so an imperfect pushdown is a performance choice, never a correctness risk.
-	var pf *vgi.PushdownFilters
-	if params.PushdownFilters != nil {
-		pf, _ = vgi.DeserializeFilters(params.PushdownFilters, params.JoinKeys)
-	}
-	query, pushed := buildMergedQuery(pf, args.Query)
+	// The SDK has already decoded the Filter Encoding v2 snapshot against the
+	// authoritative bind schema into CurrentPushdownFilters (nil when none).
+	query, pushed := buildMergedQuery(params.CurrentPushdownFilters, args.Query)
 	if len(pushed) > 0 {
 		cols := make([]string, 0, len(pushed))
 		for c := range pushed {

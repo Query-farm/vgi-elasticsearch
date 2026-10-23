@@ -1,0 +1,14 @@
+# Private grader fields for the vgi.agent_test_tasks suite advertised by the
+# worker (VGI416: the catalog tag carries only name + prompt). vgi-lint joins
+# these to the advertised tasks by name.
+tasks:
+  - name: "describe_schema_from_fields"
+    reference_sql: "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double'))"
+  - name: "describe_temporal_and_object_columns"
+    reference_sql: "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'docs', fields => 'created:date,meta:object'))"
+  - name: "type_mapping_integer_boolean"
+    reference_sql: "SELECT es_type, duckdb_type FROM elasticsearch.main.es_type_mapping WHERE es_type IN ('long','boolean') ORDER BY es_type"
+  - name: "type_mapping_json_family"
+    reference_sql: "SELECT es_type FROM elasticsearch.main.es_type_mapping WHERE category = 'json' ORDER BY es_type"
+  - name: "type_mapping_temporal_target"
+    reference_sql: "SELECT DISTINCT duckdb_type FROM elasticsearch.main.es_type_mapping WHERE category = 'temporal'"
