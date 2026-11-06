@@ -130,7 +130,7 @@ make test       # all of the above
 `opensearchproject/opensearch:2.17.0` (Apache-2.0) with the security plugin
 disabled on host port 9209, seeds a fixed index, runs the suite, and tears the
 container down. `test-sql` also needs `haybarn-unittest` on `PATH`
-(`uv tool install haybarn-unittest`).
+(`uv tool install --prerelease allow 'haybarn-unittest>=2.0.0rc11,<2.1'`).
 
 The centerpiece live test indexes 25 documents and pages through them one batch
 per tick at `page_size := 4` (7 ticks: 6×4 + 1 short), **gob-round-tripping the

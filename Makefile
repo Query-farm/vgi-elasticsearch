@@ -12,7 +12,7 @@
 #   make fmt / vet / lint / clean
 #
 # test-sql / test-live need Docker; test-sql also needs haybarn-unittest on PATH:
-#   uv tool install 'haybarn-unittest<2'
+#   uv tool install --prerelease allow 'haybarn-unittest>=2.0.0rc11,<2.1'
 #   export PATH="$$HOME/.local/bin:$$PATH"
 
 WORKER_BIN  := vgi-elasticsearch-worker
@@ -84,7 +84,7 @@ test-sql: build
 	VGI_ELASTICSEARCH_WORKER="$(WORKER_PATH)" \
 	VGI_ES_TEST_URL="$(OS_URL)" \
 	VGI_ES_TEST_INDEX="$(E2E_INDEX)" \
-		haybarn-unittest --test-dir "$(TEST_DIR)" "$(TEST_PATTERN)"
+		haybarn-unittest --keep-home --test-dir "$(TEST_DIR)" "$(TEST_PATTERN)"
 
 fmt:
 	gofmt -w .
