@@ -18,7 +18,7 @@ drops**.
 
 ```sql
 LOAD vgi;
-ATTACH 'elasticsearch' AS es (TYPE vgi, LOCATION '/path/to/vgi-elasticsearch-worker');
+ATTACH 'elasticsearch' AS es (TYPE vgi, LOCATION 'github-auto://Query-farm/vgi-elasticsearch@v0.2.1');
 
 -- Page through an entire index as rows (columns derived from the mapping):
 SELECT _id, name, n, created
@@ -29,6 +29,44 @@ SELECT _id, n
 FROM es.es_search('http://localhost:9200', 'my_index')
 WHERE n >= 100 AND status = 'active';
 ```
+
+## Quick start
+
+Every [GitHub release](https://github.com/Query-farm/vgi-elasticsearch/releases) ships a prebuilt worker binary. The `vgi` extension downloads the one for your platform, checks its SHA-256 and caches it, so there is nothing to install besides DuckDB:
+
+```sql
+INSTALL vgi FROM community;
+LOAD vgi;
+
+ATTACH 'elasticsearch' AS elasticsearch (TYPE vgi, LOCATION 'github-auto://Query-farm/vgi-elasticsearch@v0.2.1');
+
+-- Bind the column schema for the products index from an explicit fields spec: the
+-- _id/_score meta columns plus one typed column per declared source field.
+DESCRIBE SELECT _id, _score, name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');
+
+-- Bind the schema for a projected, filtered, sorted read of the products index —
+-- name/price project down via _source filtering and price > 100 pushes into the query
+-- DSL.
+DESCRIBE SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;
+```
+
+`es_search` connects to the cluster you name in its `endpoint` argument. For a secured cluster pass `username := …`/`password := …` (HTTP basic auth) or `apikey := …`; `insecuretls := true` skips TLS verification for self-signed test clusters. See [the `es_search` table function](#the-es_search-table-function) for every option.
+
+Prebuilt binaries cover macOS (Apple silicon), Linux (x86-64 and arm64) and Windows (x86-64). `github-auto://` needs an explicit release tag; change `@v0.2.1` to move to a newer release.
+
+### Other ways to run it
+
+- **Docker** (the image bundles the worker; needs a container runtime):
+
+  ```sql
+  ATTACH 'elasticsearch' AS elasticsearch (TYPE vgi, LOCATION 'docker://ghcr.io/query-farm/vgi-elasticsearch:0.2.1');
+  ```
+
+- **Manual download.** Download the archive for your platform from the [releases page](https://github.com/Query-farm/vgi-elasticsearch/releases), verify it against its `.sha256` file (a cosign `.cosign.bundle` is published alongside), unpack it, and set `LOCATION` to the path of the extracted worker executable.
+
+### Build from source
+
+To build the worker yourself, see [Building and testing](#building-and-testing).
 
 ## The `es_search` table function
 
