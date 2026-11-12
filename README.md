@@ -18,7 +18,7 @@ drops**.
 
 ```sql
 LOAD vgi;
-ATTACH 'elasticsearch' AS es (TYPE vgi, LOCATION 'github-auto://Query-farm/vgi-elasticsearch@v0.3.0');
+ATTACH 'elasticsearch' AS es (TYPE vgi, LOCATION 'github-auto://Query-farm/vgi-elasticsearch@v0.4.0');
 
 -- Page through an entire index as rows (columns derived from the mapping):
 SELECT _id, name, n, created
@@ -38,7 +38,7 @@ Every [GitHub release](https://github.com/Query-farm/vgi-elasticsearch/releases)
 INSTALL vgi FROM community;
 LOAD vgi;
 
-ATTACH 'elasticsearch' AS elasticsearch (TYPE vgi, LOCATION 'github-auto://Query-farm/vgi-elasticsearch@v0.3.0');
+ATTACH 'elasticsearch' AS elasticsearch (TYPE vgi, LOCATION 'github-auto://Query-farm/vgi-elasticsearch@v0.4.0');
 
 -- Bind the column schema for the products index from an explicit fields spec: the
 -- _id/_score meta columns plus one typed column per declared source field.
@@ -52,14 +52,14 @@ DESCRIBE SELECT name, price FROM elasticsearch.main.es_search('http://localhost:
 
 `es_search` connects to the cluster you name in its `endpoint` argument. For a secured cluster pass `username := …`/`password := …` (HTTP basic auth) or `apikey := …`; `insecuretls := true` skips TLS verification for self-signed test clusters. See [the `es_search` table function](#the-es_search-table-function) for every option.
 
-Prebuilt binaries cover macOS (Apple silicon), Linux (x86-64 and arm64) and Windows (x86-64). `github-auto://` needs an explicit release tag; change `@v0.3.0` to move to a newer release.
+Prebuilt binaries cover macOS (Apple silicon), Linux (x86-64 and arm64) and Windows (x86-64). `github-auto://` needs an explicit release tag; change `@v0.4.0` to move to a newer release.
 
 ### Other ways to run it
 
 - **Docker** (the image bundles the worker; needs a container runtime):
 
   ```sql
-  ATTACH 'elasticsearch' AS elasticsearch (TYPE vgi, LOCATION 'docker://ghcr.io/query-farm/vgi-elasticsearch:0.3.0');
+  ATTACH 'elasticsearch' AS elasticsearch (TYPE vgi, LOCATION 'docker://ghcr.io/query-farm/vgi-elasticsearch:0.4.0');
   ```
 
 - **Manual download.** Download the archive for your platform from the [releases page](https://github.com/Query-farm/vgi-elasticsearch/releases), verify it against its `.sha256` file (a cosign `.cosign.bundle` is published alongside), unpack it, and set `LOCATION` to the path of the extracted worker executable.
