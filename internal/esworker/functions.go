@@ -461,7 +461,6 @@ func (s *searchState) columns() ([]Column, error) {
 	return cols, nil
 }
 
-// sortFields decodes the gob-rehydrated sort plan.
 // timestampPredicates decodes the worker-applied timestamp predicates.
 func (s *searchState) timestampPredicates() ([]TimestampPredicate, error) {
 	if s.TimestampFiltersJSON == "" {
@@ -474,6 +473,7 @@ func (s *searchState) timestampPredicates() ([]TimestampPredicate, error) {
 	return preds, nil
 }
 
+// sortFields decodes the gob-rehydrated sort plan.
 func (s *searchState) sortFields() []SortField {
 	var sf []SortField
 	_ = json.Unmarshal([]byte(s.SortFieldsJSON), &sf)
