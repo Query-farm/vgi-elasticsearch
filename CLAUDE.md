@@ -23,6 +23,10 @@ pushdown.
   - `functions.go` — the `es_search` table function: `OnBind` (schema),
     `NewState` (resolve plan, projection + predicate pushdown, NO network except
     bind-time mapping), `Process`/`NextPage` (one page per tick, advance cursor).
+  - `tsfilter.go` — worker-side application of pushed TIMESTAMPTZ predicates
+    (the ES query declines them and DuckDB never re-checks pushed filters).
+  - `examples.go` — composed (two-index join) examples, defined once and appended
+    to the function + schema `vgi.example_queries` via `WithComposedExamples`.
   - `*_test.go` — unit tests (pure logic) + `live_test.go` (gated on
     `VGI_ES_TEST_URL`).
 
@@ -44,9 +48,13 @@ pushdown.
   `projectColumns`.
 - **`_shard_doc` is forbidden.** OpenSearch 2.x rejects it. Use the `_id`
   tiebreaker (works on both flavors).
-- **Pushdown is a superset, never a correctness risk.** `AutoApplyFilters` is
-  off, so DuckDB re-applies every predicate. Push only what ES evaluates
-  identically; decline anything uncertain (return it un-pushed).
+- **Pushdown must be EXACT.** DuckDB removes every predicate it pushes into a
+  table function from its plan and never re-checks the rows, and
+  `AutoApplyFilters` is off (vgi-go 0.42's evaluator cannot stage TIMESTAMPTZ
+  columns/literals, so it would error on every `date` filter). A predicate the
+  ES query declines is therefore LOST unless the worker applies it: timestamp
+  comparisons are applied to each page's hits in `tsfilter.go`. Push only what
+  ES evaluates identically to SQL (`!=` also needs `exists`).
 - **STRUCT/LIST/TIMESTAMPTZ returns require an explicit `arrow_type`** — `date`
   uses a concrete `&arrow.TimestampType{Unit: Microsecond, TimeZone: "UTC"}`.
 - **Logging to stderr only** (`log/slog` default). Never write to stdout — that is

@@ -28,6 +28,13 @@ FROM es.es_search('http://localhost:9200', 'my_index');
 SELECT _id, n
 FROM es.es_search('http://localhost:9200', 'my_index')
 WHERE n >= 100 AND status = 'active';
+
+-- Join two indices (the query DSL has no joins): orders with no matching product.
+SELECT o._id AS order_id, o.product_id, o.qty
+FROM es.es_search('http://localhost:9200', 'orders', fields => 'product_id:keyword,qty:long') AS o
+ANTI JOIN es.es_search('http://localhost:9200', 'products', fields => 'product_id:keyword') AS p
+  ON o.product_id = p.product_id
+ORDER BY o._id;
 ```
 
 ## Quick start
@@ -50,7 +57,7 @@ DESCRIBE SELECT _id, _score, name, price FROM elasticsearch.main.es_search('http
 DESCRIBE SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;
 ```
 
-`es_search` connects to the cluster you name in its `endpoint` argument. For a secured cluster pass `username := …`/`password := …` (HTTP basic auth) or `apikey := …`; `insecuretls := true` skips TLS verification for self-signed test clusters. See [the `es_search` table function](#the-es_search-table-function) for every option.
+`es_search` connects to the cluster you name in its `endpoint` argument. For a secured cluster pass `username := …`/`password := …` (HTTP basic auth) or `api_key := …`; `insecure_tls := true` skips TLS verification for self-signed test clusters. See [the `es_search` table function](#the-es_search-table-function) for every option.
 
 Prebuilt binaries cover macOS (Apple silicon), Linux (x86-64 and arm64) and Windows (x86-64). `github-auto://` needs an explicit release tag; change `@v0.4.0` to move to a newer release.
 
@@ -85,8 +92,8 @@ es_search(endpoint, index, ...) -> rows
 | `keep_alive`    | named       | `1m`         | PIT `keep_alive` duration |
 | `page_size`     | named       | `1000`       | Hits fetched per scan tick (`size`) |
 | `username`/`password` | named | —            | HTTP basic auth |
-| `apikey`        | named       | —            | `Authorization: ApiKey <value>` |
-| `insecuretls`   | named       | `false`      | Skip TLS verification (self-signed test clusters) |
+| `api_key`       | named       | —            | `Authorization: ApiKey <value>` |
+| `insecure_tls`  | named       | `false`      | Skip TLS verification (self-signed test clusters) |
 
 Every row carries `_id VARCHAR` and `_score DOUBLE` plus the projected source
 fields.
@@ -133,9 +140,13 @@ DuckDB `WHERE` predicates are mapped onto the ES query DSL:
 | `AND` of the above | combined `bool.filter` |
 
 Predicates that cannot be pushed (`OR`, struct/nested, expression, join-key
-filters) fall back to DuckDB post-filtering. Pushdown is always a *performance*
-choice, never a correctness one: DuckDB re-applies every predicate client-side,
-so an imperfect pushdown can only return a superset, which DuckDB then trims. A
+filters) are not sent to the cluster; DuckDB evaluates `OR` and expression
+predicates itself, and a join enforces its own keys. Note that DuckDB does *not*
+re-check a predicate it has pushed into `es_search`, so the worker must return
+exactly the matching rows: `!=` also requires the field to exist (SQL drops
+NULLs, ES `must_not` alone would not), and `TIMESTAMPTZ` comparisons on `date`
+columns, which the query DSL cannot express exactly, are applied by the worker
+to each page of hits. A
 raw `query` argument is AND-merged with the pushed predicates.
 
 ### Type mapping
@@ -203,7 +214,7 @@ the worker speaks to both flavors at runtime (`flavor := 'elasticsearch'`).
   functions.
 - **Predicate pushdown** covers `term`/`terms`/`range`/`exists` and their `AND`
   composition. `OR`, struct/nested-field, expression, and join-key filters are
-  not pushed (they post-filter in DuckDB). Text fields are matched with `term`
+  not pushed (DuckDB evaluates them). Text fields are matched with `term`
   (exact); if you index analyzed `text` you may want a `.keyword` sub-field or the
   raw `query` escape hatch for full-text `match`.
 - **PIT keep-alive / expiry:** each search refreshes the PIT's `keep_alive`, but a

@@ -6,6 +6,8 @@ tasks:
     reference_sql: "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double'))"
   - name: "describe_temporal_and_object_columns"
     reference_sql: "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM elasticsearch.main.es_search('http://localhost:9200', 'docs', fields => 'created:date,meta:object'))"
+  - name: "describe_cross_index_join"
+    reference_sql: "SELECT column_name, column_type FROM (DESCRIBE SELECT o.product_id, o.qty * p.price AS line_total FROM elasticsearch.main.es_search('http://localhost:9200', 'orders', fields => 'product_id:keyword,qty:long') AS o JOIN elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'product_id:keyword,price:double') AS p ON o.product_id = p.product_id)"
   - name: "type_mapping_integer_boolean"
     reference_sql: "SELECT es_type, duckdb_type FROM elasticsearch.main.es_type_mapping WHERE es_type IN ('long','boolean') ORDER BY es_type"
   - name: "type_mapping_json_family"

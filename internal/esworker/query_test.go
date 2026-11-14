@@ -188,6 +188,12 @@ func TestPushdownNotEqualGoesToMustNot(t *testing.T) {
 	if !ok || len(mn) != 1 {
 		t.Fatalf("!= should map to must_not, got %v", q)
 	}
+	// SQL drops rows where name is NULL; ES must_not alone would keep docs
+	// missing the field, so the field must also be required to exist.
+	fc, _ := q["bool"].(map[string]any)["filter"].([]any)
+	if len(fc) != 1 || !reflect.DeepEqual(fc[0], map[string]any{"exists": map[string]any{"field": "name"}}) {
+		t.Fatalf("!= should also require the field to exist, got %v", q)
+	}
 }
 
 func TestPushdownRange(t *testing.T) {

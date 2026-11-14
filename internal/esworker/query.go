@@ -99,19 +99,24 @@ func sortToDSL(sort []SortField) []any {
 
 // BuildQueryFromFilters maps a set of DuckDB pushdown filters onto an ES query
 // DSL bool query. It returns the query (or nil if no filter is pushable) plus
-// the set of column names that were FULLY pushed to the server. Columns not in
-// that set must still be post-filtered in SQL by DuckDB.
+// the set of column names that were FULLY pushed to the server.
+//
+// DuckDB does not re-check predicates it pushes into a table function, so a
+// declined predicate is NOT post-filtered by DuckDB. Timestamp comparisons are
+// declined here and applied by the worker itself (tsfilter.go).
 //
 // Pushdown rules (conservative — only push what ES evaluates identically):
 //   - col = v            -> term  (or match_all-bypass)
 //   - col IN (a,b,...)   -> terms
 //   - col >/>=/</<= v    -> range
+//   - col != v           -> must_not term + exists (SQL drops NULLs)
 //   - col IS NULL        -> must_not exists
 //   - col IS NOT NULL    -> exists
 //   - AND of the above   -> combined into the same bool/filter context
 //
 // OR, struct, expression and join-key filters are NOT pushed (returned as
-// not-pushed) and fall back to DuckDB post-filtering. fieldType maps a column to
+// not-pushed); DuckDB keeps OR/expression predicates as its own residual filter,
+// and a join-key filter is enforced by the join itself. fieldType maps a column to
 // its ES type so we can choose `.keyword` sub-fields for text equality if needed
 // (kept simple in v1: we trust the caller to target keyword/numeric fields).
 func BuildQueryFromFilters(pf *vgi.PushdownFilters) (map[string]any, map[string]struct{}) {
@@ -131,7 +136,13 @@ func BuildQueryFromFilters(pf *vgi.PushdownFilters) (map[string]any, map[string]
 				return false
 			}
 			if neg {
+				// SQL `col != v` is NULL (dropped) for a missing value, but ES
+				// must_not alone keeps documents without the field, and DuckDB
+				// does not re-check pushed predicates: require the field too.
 				mustNot = append(mustNot, clause)
+				filterClauses = append(filterClauses, map[string]any{
+					"exists": map[string]any{"field": ft.ColumnName()},
+				})
 			} else {
 				filterClauses = append(filterClauses, clause)
 			}
@@ -217,7 +228,7 @@ func constantToClause(cf *vgi.ConstantFilter) (map[string]any, bool, bool) {
 
 // scalarGo unwraps an Arrow scalar into a plain Go value suitable for JSON
 // encoding into a query DSL. Unsupported/complex scalars return nil so the
-// caller declines the pushdown (DuckDB then post-filters).
+// caller declines the pushdown (timestamps are then applied by tsfilter.go).
 func scalarGo(s scalar.Scalar) any {
 	if s == nil || !s.IsValid() {
 		return nil

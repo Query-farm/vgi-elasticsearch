@@ -39,6 +39,10 @@ const AgentTestTasks = `[
     "prompt": "This worker exposes an es_search table function in the elasticsearch.main schema. WITHOUT contacting a live cluster (use an explicit fields spec), determine the DuckDB column types es_search assigns to an Elasticsearch 'date' field named 'created' and an 'object' field named 'meta', for an index named 'docs'. Return exactly two columns, column_name and column_type, one row per exposed column (including the always-present _id and _score meta columns), in the order es_search exposes them."
   },
   {
+    "name": "describe_cross_index_join",
+    "prompt": "This worker exposes an es_search table function in the elasticsearch.main schema. Elasticsearch cannot join indices, but SQL over es_search can. WITHOUT contacting a live cluster (pass explicit fields specs; use the endpoint 'http://localhost:9200'), determine the result columns and DuckDB types of a query that inner-joins an 'orders' index (keyword field product_id, long field qty) to a 'products' index (keyword field product_id, double field price) on product_id and returns two columns: the order's product_id, and line_total computed as qty multiplied by price. Return exactly two columns, column_name and column_type, one row per result column, in the order product_id then line_total."
+  },
+  {
     "name": "type_mapping_integer_boolean",
     "prompt": "This worker exposes a cluster-free reference view named es_type_mapping in the elasticsearch.main schema. Using only that view, return the DuckDB column type es_search assigns to the Elasticsearch field types 'long' and 'boolean'. Return exactly two columns, es_type and duckdb_type, ordered by es_type."
   },
@@ -111,6 +115,10 @@ type searchState struct {
 	// QueryJSON is the server-side query DSL (predicate pushdown + raw escape
 	// hatch), JSON-encoded; empty = match_all.
 	QueryJSON string
+	// TimestampFiltersJSON holds the pushed timestamp predicates the ES query
+	// cannot evaluate exactly ([]TimestampPredicate, JSON); Process applies them
+	// to every page's hits because DuckDB never re-checks pushed predicates.
+	TimestampFiltersJSON string
 
 	// Resumable cursor — the heart of the differentiator.
 	PitID      string          // the open Point-In-Time id
@@ -146,7 +154,7 @@ func (f *SearchFunction) Metadata() vgi.FunctionMetadata {
 			// VGI515: described-example list. The native duckdb_functions().examples
 			// carrier drops the per-example description, so the described copy lives
 			// here (kept byte-identical in SQL to the Examples below).
-			"vgi.example_queries": `[{"description":"Bind the column schema for the products index from an explicit fields spec. The _id/_score meta columns are always present; each declared source field becomes a typed column (here name is ` + "`VARCHAR`" + `, price is ` + "`DOUBLE`" + `).","sql":"DESCRIBE SELECT _id, _score, name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');"},{"description":"Bind the schema for a projected, filtered, sorted read of the products index. At runtime name/price project down via _source filtering and price > 100 pushes into the Elasticsearch query DSL; the explicit fields spec lets the column shape resolve without a live cluster.","sql":"DESCRIBE SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;"},{"description":"Bind the schema for an error-log scan over the logs-* index pattern on an Elasticsearch cluster, using API-key auth, the Elasticsearch PIT dialect, and a raw query-DSL escape hatch. The explicit fields spec resolves the column shape without contacting the cluster.","sql":"DESCRIBE SELECT level FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', fields => 'level:keyword', api_key => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');"}]`,
+			"vgi.example_queries": WithComposedExamples(`[{"description":"Bind the column schema for the products index from an explicit fields spec. The _id/_score meta columns are always present; each declared source field becomes a typed column (here name is ` + "`VARCHAR`" + `, price is ` + "`DOUBLE`" + `).","sql":"DESCRIBE SELECT _id, _score, name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');"},{"description":"Bind the schema for a projected, filtered, sorted read of the products index. At runtime name/price project down via _source filtering and price > 100 pushes into the Elasticsearch query DSL; the explicit fields spec lets the column shape resolve without a live cluster.","sql":"DESCRIBE SELECT name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double') WHERE price > 100 ORDER BY price DESC;"},{"description":"Bind the schema for an error-log scan over the logs-* index pattern on an Elasticsearch cluster, using API-key auth, the Elasticsearch PIT dialect, and a raw query-DSL escape hatch. The explicit fields spec resolves the column shape without contacting the cluster.","sql":"DESCRIBE SELECT level FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', fields => 'level:keyword', api_key => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');"}]`),
 			// es_search has a DYNAMIC output schema (resolved at bind from the
 			// index mapping or the `fields` spec), so declare it with the
 			// structured dynamic-columns tag (VGI307): the two always-present meta
@@ -167,7 +175,9 @@ func (f *SearchFunction) Metadata() vgi.FunctionMetadata {
 				"| `created` | TIMESTAMP WITH TIME ZONE | An ES `date`/`date_nanos` field, parsed to a UTC microsecond timestamp. |\n" +
 				"| `meta` | VARCHAR | An ES `object`/`nested`/`geo_*` field, surfaced as raw JSON text. |",
 		},
-		Examples: []vgi.CatalogExample{
+		// The composed (two-index) examples follow, keeping them within the first
+		// five examples the vgi-lint agent simulator shows.
+		Examples: append([]vgi.CatalogExample{
 			{
 				SQL:         "DESCRIBE SELECT _id, _score, name, price FROM elasticsearch.main.es_search('http://localhost:9200', 'products', fields => 'name:keyword,price:double');",
 				Description: "Bind the column schema for the `products` index from an explicit `fields` spec. The _id/_score meta columns are always present; each declared source field becomes a typed column (here `name` VARCHAR, `price` DOUBLE).",
@@ -180,7 +190,7 @@ func (f *SearchFunction) Metadata() vgi.FunctionMetadata {
 				SQL:         "DESCRIBE SELECT level FROM elasticsearch.main.es_search('https://es.example.com', 'logs-*', fields => 'level:keyword', api_key => 'BASE64APIKEY', flavor => 'elasticsearch', query => '{\"term\":{\"level\":\"error\"}}');",
 				Description: "Bind the schema for an error-log scan over the `logs-*` index pattern on an Elasticsearch cluster, using API-key auth, the Elasticsearch PIT dialect, and a raw query-DSL escape hatch. The explicit `fields` spec resolves the column shape without contacting the cluster.",
 			},
-		},
+		}, ComposedExamples...),
 	}
 }
 
@@ -341,8 +351,9 @@ func (f *SearchFunction) NewState(params *vgi.ProcessParams) (*searchState, erro
 
 	// Predicate pushdown: build a query DSL from the static pushdown filters and
 	// merge it with the raw-DSL escape hatch. Columns fully pushed to the server
-	// are logged; DuckDB still re-applies all filters (AutoApplyFilters is off),
-	// so an imperfect pushdown is a performance choice, never a correctness risk.
+	// are logged. DuckDB does NOT re-check pushed predicates, so the ES query
+	// must keep exactly the matching rows (or a superset the worker trims): the
+	// timestamp comparisons it cannot express are applied by Process instead.
 	// The SDK has already decoded the Filter Encoding v2 snapshot against the
 	// authoritative bind schema into CurrentPushdownFilters (nil when none).
 	query, pushed := buildMergedQuery(params.CurrentPushdownFilters, args.Query)
@@ -352,6 +363,12 @@ func (f *SearchFunction) NewState(params *vgi.ProcessParams) (*searchState, erro
 			cols = append(cols, c)
 		}
 		slog.Debug("es_search predicate pushdown", "index", args.Index, "pushed_columns", cols)
+	}
+	tsPreds := timestampPredicates(params.CurrentPushdownFilters)
+	tsJSON := ""
+	if len(tsPreds) > 0 {
+		b, _ := json.Marshal(tsPreds)
+		tsJSON = string(b)
 	}
 	queryJSON := ""
 	if query != nil {
@@ -370,9 +387,11 @@ func (f *SearchFunction) NewState(params *vgi.ProcessParams) (*searchState, erro
 		APIKey:         args.APIKey,
 		InsecureTLS:    args.InsecureTLS,
 		ColumnsJSON:    string(colsJSON),
-		SourceIncludes: SourceIncludes(cols),
+		SourceIncludes: withPredicateColumns(SourceIncludes(cols), tsPreds),
 		SortFieldsJSON: string(sortJSON),
 		QueryJSON:      queryJSON,
+
+		TimestampFiltersJSON: tsJSON,
 	}, nil
 }
 
@@ -443,6 +462,18 @@ func (s *searchState) columns() ([]Column, error) {
 }
 
 // sortFields decodes the gob-rehydrated sort plan.
+// timestampPredicates decodes the worker-applied timestamp predicates.
+func (s *searchState) timestampPredicates() ([]TimestampPredicate, error) {
+	if s.TimestampFiltersJSON == "" {
+		return nil, nil
+	}
+	var preds []TimestampPredicate
+	if err := json.Unmarshal([]byte(s.TimestampFiltersJSON), &preds); err != nil {
+		return nil, fmt.Errorf("es_search: decode timestamp filters: %w", err)
+	}
+	return preds, nil
+}
+
 func (s *searchState) sortFields() []SortField {
 	var sf []SortField
 	_ = json.Unmarshal([]byte(s.SortFieldsJSON), &sf)
@@ -533,6 +564,11 @@ func (f *SearchFunction) Process(ctx context.Context, _ *vgi.ProcessParams, stat
 	if err != nil {
 		return err
 	}
+	tsPreds, err := state.timestampPredicates()
+	if err != nil {
+		return err
+	}
+	hits = filterHitsByTimestamp(hits, tsPreds)
 
 	schema := SchemaFromColumns(cols)
 	batch := BuildBatch(schema, cols, hits)

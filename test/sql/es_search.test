@@ -143,6 +143,34 @@ ORDER BY _id;
 d0021
 d0024
 
+# ---- FILTERS THE ES QUERY CANNOT EXPRESS ----
+# DuckDB never re-checks predicates pushed into a table function. A TIMESTAMPTZ
+# comparison is declined by the ES query builder, so it used to be silently
+# dropped (all 25 rows came back); the worker now applies it to each page.
+
+# created = 2026-01-01T00:00:<n>Z, so created >= 00:00:20 -> n in 20..25 = 6 docs.
+# Selecting only count(*) also proves a filter-only column is still fetched.
+query I
+SELECT count(*)
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100)
+WHERE created >= TIMESTAMPTZ '2026-01-01 00:00:20+00';
+----
+6
+
+# ---- CROSS-INDEX JOIN ----
+# Two es_search scans joined in SQL (ES has no joins): pair each doc (n >= 20)
+# with the doc whose n is one higher, keeping pairs whose right side has grp = 0.
+query II
+SELECT a._id, b._id
+FROM es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100) AS a
+JOIN es.es_search('${VGI_ES_TEST_URL}', '${VGI_ES_TEST_INDEX}', page_size := 100) AS b
+  ON b.n = a.n + 1
+WHERE b.grp = 0 AND a.n >= 20
+ORDER BY a._id;
+----
+d0020	d0021
+d0023	d0024
+
 # ---- RAW QUERY-DSL ESCAPE HATCH ----
 # A raw query is merged under bool/filter with any pushed predicates.
 
