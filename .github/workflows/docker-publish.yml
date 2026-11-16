@@ -88,10 +88,10 @@ jobs:
         echo "::endgroup::"
 
         echo "::group::stdio entrypoint smoke (offline test, cold container per ATTACH)"
-        TRANSPORT=subprocess \
+        TRANSPORT=stdio \
           SKIP_MOCK=1 \
           TEST_PATTERN="test/sql/offline.test" \
-          VGI_ELASTICSEARCH_WORKER="docker run -i --rm $CITEST_IMAGE stdio" \
+          WORKER="docker run -i --rm $CITEST_IMAGE stdio" \
           ci/run-integration.sh
         echo "::endgroup::"
 
@@ -102,6 +102,6 @@ jobs:
         TRANSPORT=http \
           SKIP_MOCK=1 \
           TEST_PATTERN="test/sql/offline.test" \
-          VGI_ELASTICSEARCH_WORKER="http://localhost:18000" \
+          WORKER="http://localhost:18000" \
           ci/run-integration.sh
         echo "::endgroup::"

@@ -178,8 +178,9 @@ make test       # all of the above
 `test-live` and `test-sql` require Docker; the Makefile boots a single-node
 `opensearchproject/opensearch:2.17.0` (Apache-2.0) with the security plugin
 disabled on host port 9209, seeds a fixed index, runs the suite, and tears the
-container down. `test-sql` also needs `haybarn-unittest` on `PATH`
-(`uv tool install --prerelease allow 'haybarn-unittest>=2.0.0rc11,<2.1'`).
+container down. `test-sql` installs the pinned `haybarn-unittest` SQL runner into
+`.tools` (needs uv) and runs `test/sql` over every DuckDB transport (stdio,
+launch, http) through [`ci/run-integration.sh`](ci/run-integration.sh).
 
 The centerpiece live test indexes 25 documents and pages through them one batch
 per tick at `page_size := 4` (7 ticks: 6×4 + 1 short), **gob-round-tripping the

@@ -9,11 +9,14 @@
 #   make test-live   Run the Go live tests against a dockerized OpenSearch
 #   make test-sql    Run the haybarn SQL E2E against a dockerized OpenSearch
 #   make test        test-unit + test-live + test-sql
+#   make check       lint + test (what CI runs)
 #   make fmt / vet / lint / clean
 #
-# test-sql / test-live need Docker; test-sql also needs haybarn-unittest on PATH:
-#   uv tool install --prerelease allow 'haybarn-unittest>=2.0.0rc11,<2.1'
-#   export PATH="$$HOME/.local/bin:$$PATH"
+# test-sql / test-live need Docker (OpenSearch). test-sql installs the pinned
+# haybarn-unittest SQL runner into .tools (needs uv) and runs test/sql over
+# every transport via ci/run-integration.sh:
+#   make test-sql                    stdio, launch and http
+#   make test-sql TRANSPORTS=launch  one transport
 
 WORKER_BIN  := vgi-elasticsearch-worker
 SEED_BIN    := seed
@@ -23,9 +26,6 @@ SEED_CMD    := ./cmd/seed
 WORKER_PATH := $(CURDIR)/$(WORKER_BIN)
 SEED_PATH   := $(CURDIR)/$(SEED_BIN)
 
-TEST_DIR     := .
-TEST_PATTERN := test/sql/*
-
 # Dockerized OpenSearch (Apache-2.0) — single node, security plugin disabled for
 # the test only. Host port 9209 avoids clashing with a local 9200.
 OS_IMAGE     := opensearchproject/opensearch:2.17.0
@@ -34,13 +34,21 @@ OS_PORT      := 9209
 OS_URL       := http://127.0.0.1:$(OS_PORT)
 E2E_INDEX    := vgi_es_e2e
 
-.PHONY: build test test-unit test-live test-sql os-up os-down fmt vet lint clean
+# The SQL test runner, pinned like the vgi-starter's (make tools).
+HAYBARN_VERSION  ?= 2.0.0rc11
+TOOLS            := $(CURDIR)/.tools
+HAYBARN_UNITTEST := $(TOOLS)/bin/haybarn-unittest
+TRANSPORTS       ?= stdio launch http
+
+.PHONY: build test test-unit test-live test-sql tools check os-up os-down fmt vet lint clean
 
 build:
 	go build -o $(WORKER_BIN) $(WORKER_CMD)
 	go build -o $(SEED_BIN) $(SEED_CMD)
 
 test: test-unit test-live test-sql
+
+check: lint test
 
 test-unit:
 	go test ./...
@@ -75,16 +83,20 @@ test-live: build
 	trap '$(MAKE) os-down' EXIT; \
 	VGI_ES_TEST_URL=$(OS_URL) go test ./internal/esworker/ -run TestLive -v
 
-# haybarn SQL E2E: boot OpenSearch, seed the fixed index, run the suite, tear down.
-test-sql: build
+tools: ## Install the pinned SQL test runner into .tools
+	@test -x $(HAYBARN_UNITTEST) || { uv venv -q --allow-existing $(TOOLS) && uv pip install -q -p $(TOOLS) haybarn-unittest==$(HAYBARN_VERSION); }
+
+# SQL tests through DuckDB over each transport in TRANSPORTS (stdio, launch,
+# http) against a dockerized OpenSearch; ci/run-integration.sh seeds the index
+# and starts the HTTP worker.
+test-sql: build tools
 	@set -e; \
 	$(MAKE) os-up; \
 	trap '$(MAKE) os-down' EXIT; \
-	$(SEED_PATH) --url $(OS_URL) --index $(E2E_INDEX) --count 25; \
-	VGI_ELASTICSEARCH_WORKER="$(WORKER_PATH)" \
-	VGI_ES_TEST_URL="$(OS_URL)" \
-	VGI_ES_TEST_INDEX="$(E2E_INDEX)" \
-		haybarn-unittest --keep-home --test-dir "$(TEST_DIR)" "$(TEST_PATTERN)"
+	for t in $(TRANSPORTS); do \
+		WORKER=$(WORKER_PATH) HAYBARN_UNITTEST=$(HAYBARN_UNITTEST) TRANSPORT=$$t \
+		VGI_ES_TEST_URL=$(OS_URL) VGI_ES_TEST_INDEX=$(E2E_INDEX) ci/run-integration.sh; \
+	done
 
 fmt:
 	gofmt -w .
