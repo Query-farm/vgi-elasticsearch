@@ -35,7 +35,7 @@ OS_URL       := http://127.0.0.1:$(OS_PORT)
 E2E_INDEX    := vgi_es_e2e
 
 # The SQL test runner, pinned like the vgi-starter's (make tools).
-HAYBARN_VERSION  ?= 2.0.0rc11
+HAYBARN_VERSION  ?= 2.0.1rc3
 TOOLS            := $(CURDIR)/.tools
 HAYBARN_UNITTEST := $(TOOLS)/bin/haybarn-unittest
 TRANSPORTS       ?= stdio launch http
